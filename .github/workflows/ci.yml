@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, unit & integration tests
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27018:27017']
+      redis:
+        image: redis:7-alpine
+        ports: ['6380:6379']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @echocrypt/crypto
+      - run: npm run typecheck
+      - name: Crypto unit tests
+        run: npm run test:crypto
+      - name: Server integration tests (two instances, shared Mongo + Redis)
+        run: npm run test:server
+      - run: npm run build -w client
+
+  stack:
+    name: Docker stack, scale check & browser tests
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: docker compose up -d --build --wait
+      - run: npm ci
+      - run: npm run build -w @echocrypt/crypto
+      - name: Cross-instance delivery through Redis Pub/Sub
+        run: npm run scale-check
+      - name: Browser end-to-end tests
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+          npm test
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+      - if: always()
+        run: docker compose down -v
