@@ -1,0 +1,68 @@
+# Two API instances behind nginx, sharing MongoDB and Redis.
+# The Socket.io Redis adapter relays events between instances, so users connected
+# to different instances can chat. Run `npm run scale-check` to verify it.
+name: echocrypt
+
+x-api-env: &api-env
+  MONGO_URL: mongodb://mongo:27017/echocrypt
+  REDIS_URL: redis://redis:6379
+  # Must be identical on every instance. Override it for anything beyond local use.
+  JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string-0123456789}
+  # Plain http on localhost; set to true behind TLS.
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+
+x-api: &api
+  build: .
+  image: echocrypt:latest
+  restart: unless-stopped
+  depends_on:
+    mongo:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  api1:
+    <<: *api
+    environment:
+      <<: *api-env
+      INSTANCE_ID: api1
+    ports: ['4001:4000']
+
+  api2:
+    <<: *api
+    environment:
+      <<: *api-env
+      INSTANCE_ID: api2
+    ports: ['4002:4000']
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ['${PORT:-8090}:80']
+    depends_on: [api1, api2]
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand("ping").ok']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mongo-data:
