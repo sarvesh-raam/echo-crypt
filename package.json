@@ -1,0 +1,28 @@
+{
+  "name": "echocrypt",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "End-to-end encrypted real-time chat. The server only ever stores ciphertext.",
+  "license": "MIT",
+  "author": "Sarvesh Raam T K",
+  "workspaces": [
+    "packages/crypto",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run build -w @echocrypt/crypto && npm run build -w server && npm run build -w client",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test -w @echocrypt/crypto && npm run test -w server",
+    "test:crypto": "npm run test -w @echocrypt/crypto",
+    "test:server": "npm run test -w server",
+    "scale-check": "node --experimental-strip-types scripts/scale-check.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
