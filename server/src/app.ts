@@ -12,6 +12,7 @@ import { config } from './config.js';
 import type { AppContext } from './context.js';
 import { HttpError, errorHandler } from './lib/http.js';
 import { logger } from './logger.js';
+import { scheduleGuestCleanup, startDemoBot } from './demo/bot.js';
 import { mailerFromConfig, type Mailer } from './lib/mailer.js';
 import { oauthFromConfig, type OAuthProviders } from './lib/oauth.js';
 import { authRoutes } from './routes/auth.js';
@@ -20,11 +21,12 @@ import { oauthRoutes } from './routes/oauth.js';
 import { passkeyRoutes } from './routes/passkeys.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { userRoutes } from './routes/users.js';
-import { attachSocketHandlers } from './socket/index.js';
+import { acceptEnvelope, attachSocketHandlers } from './socket/index.js';
 
 export interface App {
   httpServer: HttpServer;
   io: Server;
+  demoReady: Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -34,7 +36,7 @@ export interface App {
  * sent to instance A reaches sockets connected to instance B.
  */
 export function createApp(
-  opts: { redisUrl?: string; instanceId?: string; mailer?: Mailer | null; oauth?: OAuthProviders } = {},
+  opts: { redisUrl?: string; instanceId?: string; mailer?: Mailer | null; oauth?: OAuthProviders; demo?: boolean } = {},
 ): App {
   const redisUrl = opts.redisUrl ?? config.REDIS_URL;
   const redis = new Redis(redisUrl, { maxRetriesPerRequest: 3 });
@@ -54,7 +56,16 @@ export function createApp(
     io,
     mailer: opts.mailer === undefined ? mailerFromConfig() : opts.mailer,
     oauth: opts.oauth ?? oauthFromConfig(),
+    demo: null,
   };
+  const demoEnabled = opts.demo ?? config.DEMO;
+  /** Resolves once the bot is ready (or the demo is off); tests wait on it. */
+  const demoReady = demoEnabled
+    ? startDemoBot(ctx, acceptEnvelope).then((bot) => {
+        ctx.demo = bot;
+      })
+    : Promise.resolve();
+  const stopCleanup = demoEnabled ? scheduleGuestCleanup(ctx) : () => {};
 
   app.disable('x-powered-by');
   app.set('trust proxy', config.TRUST_PROXY);
@@ -98,7 +109,7 @@ export function createApp(
   });
 
   app.get('/api/info', (_req, res) => {
-    res.json({ contactEmail: config.CONTACT_EMAIL ?? null });
+    res.json({ contactEmail: config.CONTACT_EMAIL ?? null, demoBotId: ctx.demo?.id ?? null });
   });
 
   app.use('/api/auth',authRoutes(ctx), passkeyRoutes(ctx), oauthRoutes(ctx), emailRoutes(ctx));
@@ -119,8 +130,11 @@ export function createApp(
   return {
     httpServer,
     io,
+    demoReady,
     close: async () => {
       stopSockets();
+      stopCleanup();
+      await demoReady.catch(() => undefined);
       await io.close();
       // Let disconnect handlers (presence cleanup) finish before Redis goes away.
       await new Promise((r) => setTimeout(r, 50));

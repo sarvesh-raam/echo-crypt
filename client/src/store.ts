@@ -64,8 +64,12 @@ interface State {
     remember: boolean;
     /** Link the Google/GitHub account from a pending "Continue with …" sign-up. */
     linkPending?: boolean;
+    /** One-click demo account, deleted by the server after a day. */
+    guest?: boolean;
     onStep?: Step;
   }): Promise<NewAccount>;
+  /** "Try the demo": a guest account, straight into a chat with the demo bot. */
+  startDemo(onStep?: Step): Promise<void>;
   login(username: string, password: string, remember: boolean, onStep?: Step): Promise<void>;
   loginWithPasskey(remember: boolean, onStep?: Step): Promise<void>;
   /** "Forgot password": unlocks with the recovery key, sets a new password and signs in. */
@@ -378,7 +382,7 @@ export const useStore = create<State>((set, get) => {
       }
     },
 
-    async createAccount({ username, displayName, password, remember, linkPending, onStep }) {
+    async createAccount({ username, displayName, password, remember, linkPending, guest, onStep }) {
       onStep?.('Generating your keys…');
       const key = newAccountKey();
       // Passkey sign-ups still get a password slot, under a random password nobody sees;
@@ -396,6 +400,7 @@ export const useStore = create<State>((set, get) => {
         encryptedKeys: { dhPrivate: encrypted.dhPrivate, signPrivate: encrypted.signPrivate },
         recovery: { authKey: recovery.authKey, slot: await sealAccountKey(key, recovery.wrapKey, 'recovery') },
         ...(linkPending ? { linkPending: true } : {}),
+        ...(guest ? { guest: true } : {}),
       });
       accountKey = key;
       return {
@@ -420,6 +425,24 @@ export const useStore = create<State>((set, get) => {
       onStep?.('Unlocking your keys…');
       const { key, id } = await openBundle(res.user, res, wrapKey, 'password');
       await finishUnlock(res.user, key, id, remember);
+    },
+
+    async startDemo(onStep) {
+      const { demoBotId } = await api.info();
+      if (!demoBotId) throw new Error('The demo is not available right now.');
+      const suffix = Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(16).padStart(2, '0')).join('');
+      const account = await get().createAccount({
+        username: `guest_${suffix}`,
+        displayName: `Guest ${suffix.slice(0, 4).toUpperCase()}`,
+        // Never shown: the guest stays unlocked in this browser until it is deleted.
+        password: `${generatePassword()}-${generatePassword()}`,
+        remember: true,
+        guest: true,
+        onStep,
+      });
+      await account.finish();
+      onStep?.('Opening a chat with the demo bot…');
+      await get().startConversation([demoBotId]);
     },
 
     async loginWithPasskey(remember, onStep) {

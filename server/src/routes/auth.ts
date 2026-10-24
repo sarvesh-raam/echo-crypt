@@ -45,6 +45,8 @@ const registerBody = z.object({
   recovery: z.object({ authKey: b64(64), slot: wrapped }).optional(),
   /** Link the Google/GitHub account from a pending "Continue with …" sign-up. */
   linkPending: z.boolean().optional(),
+  /** One-click demo account, deleted after a day. */
+  guest: z.boolean().optional(),
 });
 
 const loginBody = z.object({ username, authKey: b64(64) });
@@ -111,6 +113,7 @@ export function authRoutes(ctx: AppContext): Router {
           keySlots: { password: body.passwordSlot, ...(body.recovery ? { recovery: body.recovery.slot } : {}) },
           ...(recovery ? { recoveryHash: recovery.hash, recoverySalt: recovery.salt } : {}),
           ...(pending ? { oauth: { [pending.provider]: { id: pending.account.id, label: pending.account.label } } } : {}),
+          ...(body.guest ? { guest: true } : {}),
         });
       } catch (err) {
         if ((err as { code?: number; keyPattern?: Record<string, unknown> }).code === 11000) {

@@ -64,6 +64,8 @@ export function conversationRoutes(ctx: AppContext): Router {
       const [view] = await viewConversations(ctx, [conv!]);
       notifyUsers(ctx, members, 'conversation:upsert', view);
       res.status(201).json({ conversation: view });
+      // A new chat with the demo bot starts with its greeting.
+      if (ctx.demo && members.includes(ctx.demo.id) && !conv!.lastMessageAt) ctx.demo.onConversation(String(conv!._id));
     }),
   );
 

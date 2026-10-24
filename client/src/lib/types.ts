@@ -5,6 +5,10 @@ export interface PublicUser {
   username: string;
   displayName: string;
   publicKeys: PublicKeys;
+  /** One-click demo account, deleted after a day. */
+  guest?: boolean;
+  /** The demo bot (its keys live on the server). */
+  bot?: boolean;
 }
 
 export interface Member extends PublicUser {

@@ -33,8 +33,11 @@ export interface Instance {
   url: string;
 }
 
-export async function startInstance(opts: { mailer?: Mailer | null; oauth?: OAuthProviders } = {}): Promise<Instance> {
-  const app = createApp({ redisUrl: REDIS_URL, mailer: opts.mailer ?? null, oauth: opts.oauth ?? {} });
+export async function startInstance(
+  opts: { mailer?: Mailer | null; oauth?: OAuthProviders; demo?: boolean } = {},
+): Promise<Instance> {
+  const app = createApp({ redisUrl: REDIS_URL, mailer: opts.mailer ?? null, oauth: opts.oauth ?? {}, demo: opts.demo ?? false });
+  await app.demoReady;
   await new Promise<void>((r) => app.httpServer.listen(0, '127.0.0.1', r));
   const { port } = app.httpServer.address() as AddressInfo;
   return { app, url: `http://127.0.0.1:${port}` };

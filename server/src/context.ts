@@ -1,5 +1,6 @@
 import type { Redis } from 'ioredis';
 import type { Server } from 'socket.io';
+import type { DemoBot } from './demo/bot.js';
 import type { Mailer } from './lib/mailer.js';
 import type { OAuthProviders } from './lib/oauth.js';
 
@@ -9,6 +10,8 @@ export interface AppContext {
   /** Sends email sign-in codes; null when email sign-in is not configured. */
   mailer: Mailer | null;
   oauth: OAuthProviders;
+  /** The demo bot once it has started; null when the demo is off. */
+  demo: DemoBot | null;
 }
 
 export const userRoom = (userId: string) => `user:${userId}`;

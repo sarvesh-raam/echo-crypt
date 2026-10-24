@@ -16,7 +16,7 @@ export function userRoutes(): Router {
       const q = parse(z.string().trim().toLowerCase().min(1).max(24), req.query.q);
       const users = await User.find(
         { username: { $regex: `^${escapeRegex(q)}` }, _id: { $ne: currentUser(req) } },
-        { username: 1, displayName: 1, publicKeys: 1 },
+        { username: 1, displayName: 1, publicKeys: 1, guest: 1, bot: 1 },
       )
         .sort({ username: 1 })
         .limit(10)
@@ -28,7 +28,7 @@ export function userRoutes(): Router {
   r.get(
     '/:id',
     handler(async (req, res) => {
-      const user = await User.findById(parse(objectId, req.params.id), { username: 1, displayName: 1, publicKeys: 1 }).lean();
+      const user = await User.findById(parse(objectId, req.params.id), { username: 1, displayName: 1, publicKeys: 1, guest: 1, bot: 1 }).lean();
       if (!user) throw new HttpError(404, 'User not found');
       res.json({ user: publicUser(user) });
     }),

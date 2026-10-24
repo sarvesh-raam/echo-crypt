@@ -55,6 +55,10 @@ const userSchema = new Schema(
       google: { type: linkedAccount },
       github: { type: linkedAccount },
     },
+    /** One-click demo account; deleted (with its direct chats) after GUEST_TTL. */
+    guest: { type: Boolean },
+    /** The demo bot: a normal participant whose keys live on the server. */
+    bot: { type: Boolean },
   },
   { timestamps: true },
 );
@@ -62,18 +66,23 @@ const userSchema = new Schema(
 const whenSet = (path: string) => ({ unique: true, partialFilterExpression: { [path]: { $type: 'string' } } });
 userSchema.index({ 'passkeys.credentialId': 1 }, whenSet('passkeys.credentialId'));
 userSchema.index({ email: 1 }, whenSet('email'));
+userSchema.index({ guest: 1, createdAt: 1 }, { partialFilterExpression: { guest: true } });
 userSchema.index({ 'oauth.google.id': 1 }, whenSet('oauth.google.id'));
 userSchema.index({ 'oauth.github.id': 1 }, whenSet('oauth.github.id'));
 
 export type UserDoc = InferSchemaType<typeof userSchema> & { _id: import('mongoose').Types.ObjectId };
 export const User = model('User', userSchema);
 
-export const publicUser = (u: Pick<UserDoc, '_id' | 'username' | 'displayName' | 'publicKeys'>) => ({
+export const publicUser = (
+  u: Pick<UserDoc, '_id' | 'username' | 'displayName' | 'publicKeys'> & Partial<Pick<UserDoc, 'guest' | 'bot'>>,
+) => ({
   id: String(u._id),
   username: u.username,
   displayName: u.displayName,
   // Required in the schema; Mongoose types nested paths as optional.
   publicKeys: { dh: u.publicKeys!.dh, sign: u.publicKeys!.sign },
+  ...(u.guest ? { guest: true } : {}),
+  ...(u.bot ? { bot: true } : {}),
 });
 
 const plainWrapped = (w: { iv: string; data: string }) => ({ iv: w.iv, data: w.data });

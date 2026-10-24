@@ -1,4 +1,4 @@
-import { ArrowLeft, Fingerprint, KeyRound, LifeBuoy, Loader2, Lock, Mail, ServerOff, ShieldCheck, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Fingerprint, KeyRound, LifeBuoy, Loader2, Lock, Mail, ServerOff, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Divider, Field, PasswordInput, ProviderIcon, RememberDevice } from '../components/forms';
 import { RecoveryCode } from '../components/SecurityDialog';
@@ -28,7 +28,7 @@ interface Pending {
 export function AuthPage() {
   const locked = useStore((s) => s.phase === 'locked');
   const lockedUser = useStore((s) => s.me);
-  const { login, createAccount, loginWithPasskey, recover, emailLogin, logout } = useStore.getState();
+  const { login, createAccount, startDemo, loginWithPasskey, recover, emailLogin, logout } = useStore.getState();
 
   const [view, setView] = useState<View>('login');
   const [providers, setProviders] = useState<Providers>({ google: false, github: false, email: false });
@@ -48,9 +48,11 @@ export function AuthPage() {
   const [account, setAccount] = useState<NewAccount | null>(null);
   /** Why the passkey of a passkey sign-up could not be created (then a password is set instead). */
   const [passkeyFailed, setPasskeyFailed] = useState<string | null>(null);
+  const [demo, setDemo] = useState(false);
 
   useEffect(() => {
     api.providers().then(setProviders, () => undefined);
+    api.info().then((i) => setDemo(!!i.demoBotId), () => undefined);
     if (takeSignup()) {
       api.pendingSignup().then(
         (p) => {
@@ -220,6 +222,20 @@ export function AuthPage() {
           </div>
           {(view === 'recover' || view === 'email') && (
             <BackLink onClick={() => go('login')}>{locked ? 'Back to unlock' : 'Back to sign in'}</BackLink>
+          )}
+          {demo && !locked && !pending && (view === 'login' || view === 'register') && (
+            <button
+              type="button"
+              className="group mb-8 flex w-full items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-left transition hover:border-accent/60 hover:bg-accent/10 disabled:opacity-60"
+              disabled={busy}
+              onClick={() => void run(() => startDemo(setStep), 'Creating a guest account…')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-accent">Just looking? Try the live demo</span>
+                <span className="block text-xs text-ink-400">No sign-up. A guest account and a bot that shows what the server stores.</span>
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-accent transition group-hover:translate-x-0.5" />
+            </button>
           )}
           <h2 className="text-2xl font-semibold tracking-tight">{heading}</h2>
           <p className="mt-2 text-sm text-ink-400">{intro}</p>

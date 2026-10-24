@@ -181,6 +181,15 @@ try {
   if (!(await alice.getByLabel('Message').isDisabled())) throw new Error('composer should be locked after a key change');
   step('server-side key swap detected; sending blocked');
 
+  const visitor = await device('visitor');
+  await visitor.getByRole('button', { name: /Try the live demo/ }).click();
+  await visitor.getByText('Connected').waitFor({ timeout: 30_000 });
+  await visitor.getByText('Demo account.').waitFor();
+  await visitor.getByText(/I’m the EchoCrypt demo bot/).waitFor({ timeout: 15_000 });
+  await send(visitor, 'is this really encrypted');
+  await visitor.getByText('Decrypted on my side: “is this really encrypted”').waitFor({ timeout: 15_000 });
+  step('one-click demo: guest account, bot decrypts and shows the stored ciphertext');
+
   if (errors.length) throw new Error(`browser errors:\n${errors.join('\n')}`);
   console.log('\nAll UI checks passed.');
 } finally {

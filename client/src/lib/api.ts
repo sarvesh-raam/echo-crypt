@@ -36,6 +36,7 @@ export const api = {
   login: (username: string, authKey: string) =>
     request<{ user: PublicUser } & KeyBundle>('/api/auth/login', { body: { username, authKey } }),
   providers: () => request<Providers>('/api/auth/providers'),
+  info: () => request<{ contactEmail: string | null; demoBotId: string | null }>('/api/info'),
   pendingSignup: () =>
     request<{ provider: OAuthProvider; label: string; displayName: string | null; username: string }>('/api/auth/signup/pending'),
   cancelSignup: () => request<void>('/api/auth/signup/pending', { method: 'DELETE' }),

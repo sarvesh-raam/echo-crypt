@@ -4,7 +4,7 @@ import { conversationTitle, useStore } from '../store';
 import { takeSecurityFlash } from '../lib/flash';
 import { NewChatDialog } from './NewChatDialog';
 import { SecurityDialog } from './SecurityDialog';
-import { Avatar } from './ui';
+import { Avatar, BotBadge } from './ui';
 
 function shortTime(iso: string | null) {
   if (!iso) return '';
@@ -61,6 +61,17 @@ export function Sidebar() {
         </button>
       </header>
 
+      {me.guest && (
+        <div className="mx-4 mt-3 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2.5 text-xs text-ink-300">
+          <p>
+            <span className="font-semibold text-accent">Demo account.</span> It and its chats are deleted after 24 hours.
+          </p>
+          <button className="mt-1.5 font-semibold text-accent hover:underline" onClick={() => void logout()}>
+            Create a real account →
+          </button>
+        </div>
+      )}
+
       <div className="px-4 py-3">
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-ink-400" />
@@ -113,7 +124,10 @@ export function Sidebar() {
               )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
-                  <p className={`truncate text-sm ${count ? 'font-semibold' : 'font-medium'}`}>{title}</p>
+                  <p className={`truncate text-sm ${count ? 'font-semibold' : 'font-medium'}`}>
+                    {title}
+                    {other?.bot && <BotBadge />}
+                  </p>
                   <span className="shrink-0 text-[11px] text-ink-400">{shortTime(c.lastMessageAt)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">

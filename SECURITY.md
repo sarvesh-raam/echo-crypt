@@ -50,6 +50,7 @@ All from the Web Crypto API; no custom cryptography.
 - **Malicious client code.** The server serves the web app, so a compromised server could ship JavaScript that leaks keys. This is inherent to browser-delivered E2EE.
 - **Compromised endpoints:** malware or a malicious browser extension on a user's device.
 - **Session theft.** Sessions are 7-day JWTs in an `HttpOnly`, `Secure` (in production), `SameSite=Strict` cookie. There is no server-side revocation list, so a stolen token stays valid until it expires. A stolen session cannot decrypt anything without the keys.
+- **Messages sent to the demo bot.** The bot is a regular participant whose private keys live on the server, so the server can read what is sent *to it*, by design. It cannot read any other conversation. Set `DEMO=false` to turn the bot and guest accounts off.
 - **Takeover of a linked Google/GitHub account or email inbox** gives an attacker a session, not your messages. With a session they could remove your passkeys or recovery key, or link accounts of their own (these settings do not ask for re-confirmation). That is an availability risk, not a confidentiality one.
 - **The recovery key is as powerful as the password.** Anyone with it and your username can reset the password and read your messages. Keep it offline.
 - **Denial of service** beyond basic rate limiting.

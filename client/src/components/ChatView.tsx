@@ -18,7 +18,7 @@ import type { ChatMessage } from '../lib/types';
 import { conversationTitle, useStore } from '../store';
 import { NewChatDialog } from './NewChatDialog';
 import { SafetyDialog } from './SafetyDialog';
-import { Avatar, ErrorText } from './ui';
+import { Avatar, BotBadge, ErrorText } from './ui';
 
 const EMPTY: ChatMessage[] = [];
 
@@ -103,7 +103,10 @@ export function ChatView({ conversationId }: { conversationId: string }) {
           <Avatar name={title} seed={others[0]?.id ?? conv.id} online={others[0]?.online} size={36} />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{title}</p>
+          <p className="truncate text-sm font-semibold">
+            {title}
+            {conv.type === 'direct' && others[0]?.bot && <BotBadge />}
+          </p>
           <p className="truncate text-xs text-ink-400">{subtitle}</p>
         </div>
         <button

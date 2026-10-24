@@ -1,17 +1,39 @@
 # EchoCrypt
 
+[![CI](https://github.com/sarvesh-raam/echo-crypt/actions/workflows/ci.yml/badge.svg)](https://github.com/sarvesh-raam/echo-crypt/actions/workflows/ci.yml)
+[![Live demo](https://img.shields.io/badge/demo-live-10b981)](https://echocrypt.onrender.com)
+![Tests](https://img.shields.io/badge/tests-21%20crypto%20·%2031%20server%20·%2013%20browser-10b981)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **End-to-end encrypted real-time chat. Messages are encrypted in the browser; the server only ever stores and relays ciphertext.**
 
-Socket.io for real-time delivery, MongoDB for ciphertext-only storage, and Redis Pub/Sub so the server can run as several instances behind a load balancer.
+Socket.io for real-time delivery, MongoDB for ciphertext-only storage, and Redis Pub/Sub so the server can run as several instances behind a load balancer. Sign in with a passkey, a password, or Google.
 
-**Live app: [echocrypt.onrender.com](https://echocrypt.onrender.com)**
+### ▶ Try it in 30 seconds
 
-![Chat](docs/screenshots/chat.png)
+Open **[echocrypt.onrender.com](https://echocrypt.onrender.com)** and click **"Try the live demo"**. No sign-up: you get a guest account and a chat with a bot that decrypts your message on its side and shows you exactly what the server stored. (On the free plan the first load can take up to a minute while the server wakes up.)
+
+To see two people chat live, open the site in a normal and a private window and register two accounts.
+
+![Chat between two users, with typing indicator](docs/screenshots/chat.png)
 
 <p>
-  <img src="docs/screenshots/safety-number.png" width="49%" alt="Safety number verification" />
-  <img src="docs/screenshots/key-change-warning.png" width="49%" alt="Warning when the server presents a different key" />
+  <img src="docs/screenshots/demo-bot.png" width="49%" alt="The demo bot shows what the server stored: only ciphertext" />
+  <img src="docs/screenshots/key-change-warning.png" width="49%" alt="A server-side key swap is detected: messages are refused and sending pauses" />
 </p>
+<p>
+  <img src="docs/screenshots/sign-in.png" width="49%" alt="Sign-in: password, passkey, Google, or the one-click demo" />
+  <img src="docs/screenshots/security.png" width="49%" alt="Security settings: passkeys and recovery key" />
+</p>
+
+<details>
+<summary>More screenshots: safety numbers, phone layout</summary>
+<p>
+  <img src="docs/screenshots/safety-number.png" width="64%" alt="Safety number verification" />
+  <img src="docs/screenshots/mobile.png" width="30%" alt="Phone layout" />
+</p>
+</details>
 
 ## Features
 
@@ -23,6 +45,7 @@ Socket.io for real-time delivery, MongoDB for ciphertext-only storage, and Redis
 - **Real time:** live delivery, typing indicators, online presence, unread counts, and catch-up after reconnecting.
 - **Horizontally scalable.** Run any number of API instances. Socket.io's Redis adapter carries events between them, and presence and rate limits live in Redis.
 - **Reliable sending:** optimistic UI, idempotent resends (the same envelope is never stored twice), and retry on failure.
+- **One-click demo:** guest accounts (deleted after 24 hours) and a demo bot that makes the encryption visible.
 - Responsive layout, from phone to desktop.
 
 ## How the encryption works
@@ -88,6 +111,27 @@ flowchart LR
   API2 --> M
 ```
 
+### Sending a message
+
+```mermaid
+sequenceDiagram
+  participant A as Alice's browser
+  participant S as API instance (any)
+  participant R as Redis
+  participant M as MongoDB
+  participant B as Bob's browser
+  A->>A: encrypt with a fresh key, wrap it for Alice and Bob, sign
+  A->>S: message:send (envelope)
+  S->>M: is Alice a member? load her public key
+  S->>S: verify signature, check one key per member
+  S->>M: store envelope (ciphertext only)
+  S-->>A: ack (stored id)
+  S->>R: publish to room user:bob
+  R->>S: every instance receives it
+  S->>B: message:new (from the instance holding Bob's socket)
+  B->>B: verify signature, unwrap key, decrypt
+```
+
 - Clients use the WebSocket transport only, so the load balancer needs **no sticky sessions**.
 - Every emit goes to per-user rooms (`user:<id>`). The Redis adapter publishes it, and whichever instance holds that user's sockets delivers it.
 - **Presence** is a Redis sorted set of live sockets per user, scored by expiry. Each instance refreshes its own sockets, so if an instance crashes, its users go offline when the entries expire, not never.
@@ -99,9 +143,9 @@ flowchart LR
 | Check | What it covers | Result |
 | --- | --- | --- |
 | `npm run test:crypto` | Round trips, tamper detection on every signed field, forged senders, non-members, key separation, key slots, recovery codes, safety numbers | 21 / 21 pass |
-| `npm run test:server` | Two server instances sharing Mongo + Redis: auth, cross-instance delivery, ciphertext-only storage, idempotency, rejection of forged or incomplete envelopes, history and pagination, group membership, presence and typing across instances, rate limits; passkeys checked with a software authenticator (replays, wrong origin), recovery-key reset, email codes (single use, brute-force cut-off), GitHub sign-up and sign-in against a faked provider (forged state, account linking), password change | 29 / 29 pass |
+| `npm run test:server` | Two server instances sharing Mongo + Redis: auth, cross-instance delivery, ciphertext-only storage, idempotency, rejection of forged or incomplete envelopes, history and pagination, group membership, presence and typing across instances, rate limits; the demo bot and guest clean-up; passkeys checked with a software authenticator (replays, wrong origin), recovery-key reset, email codes (single use, brute-force cut-off), GitHub sign-up and sign-in against a faked provider (forged state, account linking), password change | 31 / 31 pass |
 | `npm run scale-check` | Real Docker stack: load balancer reaches both instances; users on different instances exchange 50 messages | 50 / 50 delivered and decrypted; p50 ≈ 9 ms send→receive (one machine, Docker Desktop) |
-| `e2e/` (Playwright) | Real browsers: sign-up, direct and group chat, typing, safety numbers, reload, new-device sign-in, wrong password, password reset with a recovery key, passkey sign-up and sign-in (Chrome virtual authenticator with PRF), server-side key swap | 12 / 12 checks pass |
+| `e2e/` (Playwright) | Real browsers: sign-up, direct and group chat, typing, safety numbers, reload, new-device sign-in, wrong password, password reset with a recovery key, passkey sign-up and sign-in (Chrome virtual authenticator with PRF), server-side key swap, one-click demo | 13 / 13 checks pass |
 
 CI runs all four on every push ([workflow](.github/workflows/ci.yml)). The latency figure is from a single local run; it is not a load test.
 
@@ -140,6 +184,9 @@ npm run scale-check
 
 # Browser end-to-end tests
 cd e2e && npm install && npx playwright install chromium && npm test
+
+# Regenerate the README screenshots
+node screenshots.mjs
 ```
 
 Set your own `JWT_SECRET` (32+ random characters, the same on every instance) and `COOKIE_SECURE=true` for anything beyond local use. Web Crypto requires a secure context: `https://` or `localhost`.
@@ -173,10 +220,11 @@ npm test
 packages/crypto/   Isomorphic E2E crypto (Web Crypto only) + unit tests
 server/            Express + Socket.io API, Mongoose models, Redis adapter, presence, rate limits
   src/socket/      Real-time events: send (validate → verify → store → fan out), typing, presence
+  src/demo/        Demo bot (a participant whose keys live on the server) and guest clean-up
   test/            Integration tests running two instances side by side
 client/            React + TypeScript + Tailwind; keys held as non-extractable CryptoKeys in IndexedDB
 scripts/           scale-check: cross-instance delivery against a live deployment
-e2e/               Playwright browser tests
+e2e/               Playwright browser tests and the screenshot script
 deploy/            nginx load-balancer config
 ```
 

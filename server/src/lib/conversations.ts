@@ -15,7 +15,7 @@ type ConvLike = Pick<ConversationDoc, '_id' | 'type' | 'name' | 'members' | 'cre
 export async function viewConversations(ctx: AppContext, convs: ConvLike[]) {
   const ids = [...new Set(convs.flatMap((c) => c.members.map(String)))];
   const [users, online] = await Promise.all([
-    User.find({ _id: { $in: ids } }, { username: 1, displayName: 1, publicKeys: 1 }).lean(),
+    User.find({ _id: { $in: ids } }, { username: 1, displayName: 1, publicKeys: 1, guest: 1, bot: 1 }).lean(),
     onlineUsers(ctx.redis, ids),
   ]);
   const byId = new Map(users.map((u) => [String(u._id), publicUser(u)]));
@@ -29,7 +29,8 @@ export async function viewConversations(ctx: AppContext, convs: ConvLike[]) {
     members: c.members
       .map((m) => byId.get(String(m)))
       .filter((u): u is NonNullable<typeof u> => !!u)
-      .map((u) => ({ ...u, online: online.has(u.id) })),
+      // The demo bot answers from the server, so it is always reachable.
+      .map((u) => ({ ...u, online: online.has(u.id) || !!u.bot })),
   }));
 }
 

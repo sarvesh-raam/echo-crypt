@@ -42,6 +42,11 @@ const schema = z.object({
   BREVO_API_KEY: z.string().optional(),
   /** Shown on the privacy policy and terms pages for data requests and support. */
   CONTACT_EMAIL: z.string().email().optional(),
+  /** One-click demo: guest accounts plus a bot that shows what the server stores. */
+  DEMO: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   MAIL_FROM: z.string().email().optional(),
 });
 

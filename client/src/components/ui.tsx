@@ -63,6 +63,15 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
+/** Marks the demo bot wherever its name appears. */
+export function BotBadge() {
+  return (
+    <span className="ml-1.5 rounded bg-accent/15 px-1.5 py-px align-middle text-[10px] font-semibold tracking-wide text-accent" title="Demo bot: its keys live on the server, so it can read messages sent to it">
+      BOT
+    </span>
+  );
+}
+
 export function ErrorText({ children }: { children: ReactNode }) {
   if (!children) return null;
   return (

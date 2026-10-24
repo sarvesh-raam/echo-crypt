@@ -45,7 +45,7 @@ async function broadcastPresence(ctx: AppContext, userId: string, online: boolea
 }
 
 /** Validates, verifies and stores an envelope, then fans it out to every member. */
-async function handleSend(ctx: AppContext, userId: string, raw: unknown): Promise<WireMessage> {
+export async function acceptEnvelope(ctx: AppContext, userId: string, raw: unknown): Promise<WireMessage> {
   const parsed = envelopeSchema.safeParse(raw);
   if (!parsed.success) throw new Error('Malformed message');
   const env = parsed.data as Envelope;
@@ -78,6 +78,7 @@ async function handleSend(ctx: AppContext, userId: string, raw: unknown): Promis
   await Conversation.updateOne({ _id: conv._id }, { $set: { lastMessageAt: doc.createdAt } });
   const message = toWire(doc);
   notifyUsers(ctx, members, 'message:new', message);
+  ctx.demo?.onMessage(doc);
   return message;
 }
 
@@ -98,7 +99,7 @@ export function attachSocketHandlers(io: Server, ctx: AppContext): () => void {
       try {
         const wait = await rateLimit(ctx.redis, `msg:${userId}`, 30, 10_000);
         if (wait) return reply({ ok: false, error: 'Slow down: too many messages' });
-        reply({ ok: true, message: await handleSend(ctx, userId, raw) });
+        reply({ ok: true, message: await acceptEnvelope(ctx, userId, raw) });
       } catch (err) {
         logger.debug({ err }, 'message rejected');
         reply({ ok: false, error: err instanceof Error ? err.message : 'Could not send' });
