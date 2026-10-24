@@ -4,6 +4,8 @@
 
 Socket.io for real-time delivery, MongoDB for ciphertext-only storage, and Redis Pub/Sub so the server can run as several instances behind a load balancer.
 
+**Live app: [echocrypt.onrender.com](https://echocrypt.onrender.com)**
+
 ![Chat](docs/screenshots/chat.png)
 
 <p>
