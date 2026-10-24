@@ -8,9 +8,11 @@ export const flash = {
   error: params.get('auth_error'),
   notice: params.get('notice'),
   openSecurity: params.get('settings') === 'security',
+  /** Set after "Continue with Google/GitHub" for someone who has no account yet. */
+  signup: params.get('signup'),
 };
 
-if (params.has('auth_error') || params.has('notice') || params.has('settings')) {
+if (['auth_error', 'notice', 'settings', 'signup'].some((k) => params.has(k))) {
   window.history.replaceState(null, '', window.location.pathname);
 }
 
@@ -28,4 +30,11 @@ export function takeSecurityFlash(): { notice: string | null; error: string | nu
   const out = { notice: flash.notice, error: flash.error };
   flash.notice = flash.error = null;
   return out;
+}
+
+/** True once if the page opened to finish a Google/GitHub sign-up. */
+export function takeSignup(): boolean {
+  const pending = !!flash.signup;
+  flash.signup = null;
+  return pending;
 }

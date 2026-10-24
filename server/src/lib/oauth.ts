@@ -46,7 +46,7 @@ export function authorizeUrl(name: ProviderName, p: ProviderConfig, redirectUri:
   });
   if (name === 'google') {
     params.set('response_type', 'code');
-    params.set('scope', 'openid email');
+    params.set('scope', 'openid email profile');
     params.set('prompt', 'select_account');
     return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   }
@@ -55,14 +55,25 @@ export function authorizeUrl(name: ProviderName, p: ProviderConfig, redirectUri:
   return `https://github.com/login/oauth/authorize?${params}`;
 }
 
-/** Exchanges the code and returns the provider's stable user id plus a label to show (email or login). */
+export interface ProviderUser {
+  /** Stable id at the provider. */
+  id: string;
+  /** What to show for the link: an email (Google) or @login (GitHub). */
+  label: string;
+  /** Real name if the provider shares one; prefills sign-up. */
+  name: string | null;
+  /** Basis for a suggested username: the email's local part or the GitHub login. */
+  handle: string;
+}
+
+/** Exchanges the code and returns who the user is at the provider. */
 export async function fetchProviderUser(
   name: ProviderName,
   p: ProviderConfig,
   code: string,
   redirectUri: string,
   verifier: string,
-): Promise<{ id: string; label: string }> {
+): Promise<ProviderUser> {
   const form = new URLSearchParams({
     client_id: p.clientId,
     client_secret: p.clientSecret,
@@ -83,12 +94,12 @@ export async function fetchProviderUser(
   const headers = { authorization: `Bearer ${token.access_token}`, accept: 'application/json', 'user-agent': 'EchoCrypt' };
   if (name === 'google') {
     const res = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers });
-    const u = (await res.json().catch(() => ({}))) as { sub?: string; email?: string };
+    const u = (await res.json().catch(() => ({}))) as { sub?: string; email?: string; name?: string };
     if (!res.ok || !u.sub) throw new Error(`google userinfo failed (${res.status})`);
-    return { id: u.sub, label: u.email ?? 'Google account' };
+    return { id: u.sub, label: u.email ?? 'Google account', name: u.name ?? null, handle: u.email?.split('@')[0] ?? '' };
   }
   const res = await fetch('https://api.github.com/user', { headers });
-  const u = (await res.json().catch(() => ({}))) as { id?: number; login?: string };
+  const u = (await res.json().catch(() => ({}))) as { id?: number; login?: string; name?: string | null };
   if (!res.ok || typeof u.id !== 'number') throw new Error(`github user lookup failed (${res.status})`);
-  return { id: String(u.id), label: u.login ? `@${u.login}` : 'GitHub account' };
+  return { id: String(u.id), label: u.login ? `@${u.login}` : 'GitHub account', name: u.name ?? null, handle: u.login ?? '' };
 }

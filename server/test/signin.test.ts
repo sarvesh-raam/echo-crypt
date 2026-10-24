@@ -151,6 +151,35 @@ describe('recovery key', () => {
     expect(await identityKey(accountKey)).toBeTruthy();
   });
 
+  it('can be created together with the account', async () => {
+    const recovery = await deriveRecoveryKeys(generateRecoveryCode());
+    const placeholder = await deriveAccountKeys('unused', generateSalt(), TEST_ITERATIONS);
+    // The slot content is opaque to the server; what matters is that it is stored and checked.
+    const slot = await sealAccountKey(new Uint8Array(32), placeholder.wrapKey, 'recovery');
+    const alice = await register(A.url, 'alice', undefined, { extra: { recovery: { authKey: recovery.authKey, slot } } });
+    expect((await api(A.url, '/api/auth/security', { cookie: alice.cookie })).body.recovery).toBe(true);
+    expect((await api(A.url, '/api/auth/recovery/start', { body: { username: 'alice', authKey: recovery.authKey } })).status).toBe(200);
+  });
+
+  it('changes the password only with the current one', async () => {
+    const alice = await register(A.url, 'alice', 'first password');
+    const params = await api(A.url, '/api/auth/params?username=alice');
+    const current = await deriveAccountKeys('first password', params.body.salt, params.body.iterations);
+    const salt = generateSalt();
+    const next = await deriveAccountKeys('second password', salt, TEST_ITERATIONS);
+    const body = {
+      kdfSalt: salt,
+      kdfIterations: TEST_ITERATIONS,
+      authKey: next.authKey,
+      passwordSlot: await sealAccountKey(alice.accountKey, next.wrapKey, 'password'),
+    };
+    const wrong = await deriveAccountKeys('not it', params.body.salt, params.body.iterations);
+    expect((await api(A.url, '/api/auth/password', { cookie: alice.cookie, body: { ...body, currentAuthKey: wrong.authKey } })).status).toBe(401);
+    expect((await api(A.url, '/api/auth/password', { cookie: alice.cookie, body: { ...body, currentAuthKey: current.authKey } })).status).toBe(204);
+    const login = await api(B.url, '/api/auth/login', { body: { username: 'alice', authKey: next.authKey } });
+    expect((await openBundle(login.body, next.wrapKey, 'password')).publicKeys).toEqual(alice.identity.publicKeys);
+  });
+
   it('can be removed', async () => {
     const alice = await register(A.url, 'alice');
     const recovery = await deriveRecoveryKeys(generateRecoveryCode());
@@ -244,8 +273,10 @@ describe('GitHub sign-in', () => {
       headers: { cookie: flowCookie },
     });
     const location = new URL(res.headers.get('location') ?? '', 'http://x');
-    const session = res.headers.getSetCookie().find((c) => c.startsWith('ec_session='))?.split(';')[0];
-    return { status: res.status, location, session };
+    const cookies = res.headers.getSetCookie();
+    const session = cookies.find((c) => c.startsWith('ec_session='))?.split(';')[0];
+    const signup = cookies.find((c) => c.startsWith('ec_signup='))?.split(';')[0];
+    return { status: res.status, location, session, signup };
   }
 
   it('links an account, then signs in with it on another instance', async () => {
@@ -266,18 +297,39 @@ describe('GitHub sign-in', () => {
     expect((await api(A.url, '/api/auth/me', { cookie: done.session })).body.user.username).toBe('alice');
   });
 
-  it('refuses forged state, unknown accounts and linking without a session', async () => {
+  it('refuses forged state and linking without a session', async () => {
     fakeGitHub(777, 'stranger');
     const login = await start(A.url, 'mode=login');
     const forged = await callback(A.url, 'not-the-state', login.flowCookie);
     expect(forged.session).toBeUndefined();
+    expect(forged.signup).toBeUndefined();
     expect(forged.location.searchParams.get('auth_error')).toMatch(/expired/);
-
-    const unknown = await callback(A.url, login.location.searchParams.get('state')!, login.flowCookie);
-    expect(unknown.session).toBeUndefined();
-    expect(unknown.location.searchParams.get('auth_error')).toMatch(/No EchoCrypt account/);
-
     expect((await start(A.url, 'mode=link')).status).toBe(401);
+  });
+
+  it('signs up a new user with "Continue with GitHub", linking the account', async () => {
+    fakeGitHub(9001, 'Sarvesh-Raam');
+    await register(A.url, 'sarvesh_raam'); // the obvious username is taken
+    const login = await start(A.url, 'mode=login');
+    const back = await callback(A.url, login.location.searchParams.get('state')!, login.flowCookie);
+    expect(back.session).toBeUndefined(); // no account yet, so no session
+    expect(back.location.searchParams.get('signup')).toBe('github');
+    expect(back.signup).toMatch(/^ec_signup=/);
+
+    const pending = await api(B.url, '/api/auth/signup/pending', { cookie: back.signup });
+    expect(pending.body).toMatchObject({ provider: 'github', label: '@Sarvesh-Raam', displayName: 'Sarvesh-Raam' });
+    expect(pending.body.username).toMatch(/^sarvesh_raam_\d{4}$/);
+
+    // Without the cookie, linkPending is refused rather than silently ignored.
+    await expect(register(A.url, 'someone', undefined, { extra: { linkPending: true } })).rejects.toThrow(/400/);
+
+    const user = await register(B.url, pending.body.username, undefined, { cookie: back.signup, extra: { linkPending: true } });
+    expect((await api(A.url, '/api/auth/security', { cookie: user.cookie })).body.oauth.github).toBe('@Sarvesh-Raam');
+
+    const again = await start(A.url, 'mode=login');
+    const done = await callback(A.url, again.location.searchParams.get('state')!, again.flowCookie);
+    expect(done.signup).toBeUndefined();
+    expect((await api(A.url, '/api/auth/me', { cookie: done.session })).body.user.id).toBe(user.id);
   });
 
   it('only offers configured providers', async () => {

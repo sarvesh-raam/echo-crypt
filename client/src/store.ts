@@ -23,7 +23,8 @@ import { io, type Socket } from 'socket.io-client';
 import { create } from 'zustand';
 import { api, ApiError } from './lib/api';
 import { clearIdentities, loadIdentity, saveIdentity } from './lib/keystore';
-import { createPasskey, signInWithPasskey } from './lib/passkey';
+import { createPasskey, deviceName, signInWithPasskey } from './lib/passkey';
+import { generatePassword } from './lib/password';
 import { acceptKeys, checkTrust, type TrustState } from './lib/trust';
 import type { ChatMessage, Conversation, KeyBundle, PublicUser, WireMessage } from './lib/types';
 
@@ -50,7 +51,21 @@ interface State {
   typing: Record<string, Record<string, number>>;
 
   boot(): Promise<void>;
-  register(username: string, displayName: string, password: string, remember: boolean, onStep?: Step): Promise<void>;
+  /**
+   * Creates the account (keys, password slot, recovery slot) and signs in, but does not
+   * enter the app until finish(): the sign-up screen first shows the recovery key and,
+   * for passkey sign-ups, registers the passkey.
+   */
+  createAccount(opts: {
+    username: string;
+    displayName: string;
+    /** null = protect the keys with a passkey instead of a password. */
+    password: string | null;
+    remember: boolean;
+    /** Link the Google/GitHub account from a pending "Continue with …" sign-up. */
+    linkPending?: boolean;
+    onStep?: Step;
+  }): Promise<NewAccount>;
   login(username: string, password: string, remember: boolean, onStep?: Step): Promise<void>;
   loginWithPasskey(remember: boolean, onStep?: Step): Promise<void>;
   /** "Forgot password": unlocks with the recovery key, sets a new password and signs in. */
@@ -78,6 +93,17 @@ interface State {
 }
 
 type Step = (s: string) => void;
+
+export interface NewAccount {
+  user: PublicUser;
+  /** Shown once on the sign-up screen. */
+  recoveryCode: string;
+  addPasskey(): Promise<void>;
+  /** Sets a real password (used when a passkey sign-up could not create the passkey). */
+  setPassword(password: string): Promise<void>;
+  /** Saves the keys if "remember" was ticked and opens the app. */
+  finish(): Promise<void>;
+}
 
 // Things that must not trigger re-renders live outside the store.
 let identity: Identity | null = null;
@@ -352,12 +378,15 @@ export const useStore = create<State>((set, get) => {
       }
     },
 
-    async register(username, displayName, password, remember, onStep) {
-      onStep?.('Deriving keys from your password…');
+    async createAccount({ username, displayName, password, remember, linkPending, onStep }) {
+      onStep?.('Generating your keys…');
       const key = newAccountKey();
-      const passwordFields = await newPasswordFields(password, key);
-      onStep?.('Generating your identity keys…');
+      // Passkey sign-ups still get a password slot, under a random password nobody sees;
+      // it can be replaced with a real one if setting up the passkey fails.
+      let passwordFields = await newPasswordFields(password ?? `${generatePassword()}-${generatePassword()}`, key);
       const { identity: id, encrypted } = await createIdentity(await identityKey(key));
+      const recoveryCode = generateRecoveryCode();
+      const recovery = await deriveRecoveryKeys(recoveryCode);
       onStep?.('Creating account…');
       const { user } = await api.register({
         username,
@@ -365,8 +394,21 @@ export const useStore = create<State>((set, get) => {
         ...passwordFields,
         publicKeys: encrypted.publicKeys,
         encryptedKeys: { dhPrivate: encrypted.dhPrivate, signPrivate: encrypted.signPrivate },
+        recovery: { authKey: recovery.authKey, slot: await sealAccountKey(key, recovery.wrapKey, 'recovery') },
+        ...(linkPending ? { linkPending: true } : {}),
       });
-      await finishUnlock(user, key, id, remember);
+      accountKey = key;
+      return {
+        user,
+        recoveryCode,
+        addPasskey: () => get().addPasskey(deviceName()),
+        async setPassword(newPassword: string) {
+          const next = await newPasswordFields(newPassword, key);
+          await api.changePassword({ currentAuthKey: passwordFields.authKey, ...next });
+          passwordFields = next;
+        },
+        finish: () => finishUnlock(user, key, id, remember),
+      };
     },
 
     async login(username, password, remember, onStep) {

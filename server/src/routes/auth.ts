@@ -15,6 +15,7 @@ import {
 } from '../lib/auth.js';
 import { HttpError, handler, parse } from '../lib/http.js';
 import { PROVIDERS } from '../lib/oauth.js';
+import { clearPendingSignup, readPendingSignup, suggestUsername } from '../lib/signup.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { User, keyBundle, publicUser } from '../models/User.js';
 
@@ -40,11 +41,16 @@ const registerBody = z.object({
   ...passwordFields,
   publicKeys: z.object({ dh: b64(256), sign: b64(256) }),
   encryptedKeys: z.object({ dhPrivate: wrapped, signPrivate: wrapped }),
+  /** Recovery key slot, created together with the account. */
+  recovery: z.object({ authKey: b64(64), slot: wrapped }).optional(),
+  /** Link the Google/GitHub account from a pending "Continue with …" sign-up. */
+  linkPending: z.boolean().optional(),
 });
 
 const loginBody = z.object({ username, authKey: b64(64) });
 const recoverySetBody = z.object({ authKey: b64(64), slot: wrapped });
 const recoveryFinishBody = z.object({ username, recoveryAuthKey: b64(64), ...passwordFields });
+const passwordChangeBody = z.object({ currentAuthKey: b64(64), ...passwordFields });
 
 const WRONG_RECOVERY = 'Wrong username or recovery key';
 
@@ -86,7 +92,11 @@ export function authRoutes(ctx: AppContext): Router {
       });
       if (await User.exists({ username: body.username })) throw new HttpError(409, 'Username is taken');
 
+      const pending = body.linkPending ? readPendingSignup(req) : null;
+      if (body.linkPending && !pending) throw new HttpError(400, 'Sign-up with Google/GitHub expired. Please start again.');
+
       const { hash, salt } = await hashAuthKey(body.authKey);
+      const recovery = body.recovery ? await hashAuthKey(body.recovery.authKey) : null;
       let user;
       try {
         user = await User.create({
@@ -98,12 +108,18 @@ export function authRoutes(ctx: AppContext): Router {
           authSalt: salt,
           publicKeys: body.publicKeys,
           encryptedKeys: body.encryptedKeys,
-          keySlots: { password: body.passwordSlot },
+          keySlots: { password: body.passwordSlot, ...(body.recovery ? { recovery: body.recovery.slot } : {}) },
+          ...(recovery ? { recoveryHash: recovery.hash, recoverySalt: recovery.salt } : {}),
+          ...(pending ? { oauth: { [pending.provider]: { id: pending.account.id, label: pending.account.label } } } : {}),
         });
       } catch (err) {
-        if ((err as { code?: number }).code === 11000) throw new HttpError(409, 'Username is taken');
+        if ((err as { code?: number; keyPattern?: Record<string, unknown> }).code === 11000) {
+          const field = Object.keys((err as { keyPattern?: Record<string, unknown> }).keyPattern ?? {})[0] ?? '';
+          throw new HttpError(409, field.startsWith('oauth') ? 'That account is already linked to another user' : 'Username is taken');
+        }
         throw err;
       }
+      if (pending) clearPendingSignup(res);
       issueSession(res, String(user._id));
       res.status(201).json({ user: publicUser(user) });
     }),
@@ -136,6 +152,55 @@ export function authRoutes(ctx: AppContext): Router {
         throw new HttpError(401, 'Not signed in');
       }
       res.json({ user: publicUser(user) });
+    }),
+  );
+
+  /** Who the pending "Continue with Google/GitHub" sign-up is for, to prefill the form. */
+  r.get(
+    '/signup/pending',
+    handler(async (req, res) => {
+      const pending = readPendingSignup(req);
+      if (!pending) throw new HttpError(404, 'No sign-up in progress');
+      res.json({
+        provider: pending.provider,
+        label: pending.account.label,
+        displayName: (pending.account.name ?? pending.account.handle).slice(0, 48) || null,
+        username: await suggestUsername(pending.account.handle),
+      });
+    }),
+  );
+
+  r.delete('/signup/pending', (_req, res) => {
+    clearPendingSignup(res);
+    res.status(204).end();
+  });
+
+  /** Changes the password. Needs the current one (its auth key), so a stolen session is not enough. */
+  r.post(
+    '/password',
+    requireAuth,
+    handler(async (req, res) => {
+      const userId = currentUser(req);
+      const body = parse(passwordChangeBody, req.body);
+      await limitOrThrow(ctx.redis, res, `password:${userId}`, 10, 15 * 60_000);
+      const user = await User.findById(userId).lean();
+      if (!user || !(await verifyAuthKey(body.currentAuthKey, user.authHash, user.authSalt))) {
+        throw new HttpError(401, 'Current password is wrong');
+      }
+      const { hash, salt } = await hashAuthKey(body.authKey);
+      await User.updateOne(
+        { _id: userId },
+        {
+          $set: {
+            kdfSalt: body.kdfSalt,
+            kdfIterations: body.kdfIterations,
+            authHash: hash,
+            authSalt: salt,
+            'keySlots.password': body.passwordSlot,
+          },
+        },
+      );
+      res.status(204).end();
     }),
   );
 

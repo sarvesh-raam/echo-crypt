@@ -47,7 +47,7 @@ One service running all month uses about 744 of the 750 free instance hours Rend
 
 Each method appears on the sign-in page only once its variables are set. Add them in Render under **echocrypt → Environment**, then **Save Changes** (Render redeploys). Replace `echocrypt-xxxx.onrender.com` below with your real address.
 
-These methods sign users in, but cannot unlock encryption keys (see the README). Users link Google or GitHub to an existing account under **Security** (shield icon) and can then use one-click sign-in.
+These methods sign users up and in, but cannot unlock encryption keys (see the README). New users click **Continue with Google/GitHub** on the Register tab and protect their keys with a passkey or a password; existing users can link an account under **Security** (shield icon).
 
 ### Google (free)
 

@@ -99,9 +99,9 @@ flowchart LR
 | Check | What it covers | Result |
 | --- | --- | --- |
 | `npm run test:crypto` | Round trips, tamper detection on every signed field, forged senders, non-members, key separation, key slots, recovery codes, safety numbers | 21 / 21 pass |
-| `npm run test:server` | Two server instances sharing Mongo + Redis: auth, cross-instance delivery, ciphertext-only storage, idempotency, rejection of forged or incomplete envelopes, history and pagination, group membership, presence and typing across instances, rate limits; passkeys checked with a software authenticator (replays, wrong origin), recovery-key reset, email codes (single use, brute-force cut-off), GitHub sign-in against a faked provider (forged state, unlinked accounts) | 26 / 26 pass |
+| `npm run test:server` | Two server instances sharing Mongo + Redis: auth, cross-instance delivery, ciphertext-only storage, idempotency, rejection of forged or incomplete envelopes, history and pagination, group membership, presence and typing across instances, rate limits; passkeys checked with a software authenticator (replays, wrong origin), recovery-key reset, email codes (single use, brute-force cut-off), GitHub sign-up and sign-in against a faked provider (forged state, account linking), password change | 29 / 29 pass |
 | `npm run scale-check` | Real Docker stack: load balancer reaches both instances; users on different instances exchange 50 messages | 50 / 50 delivered and decrypted; p50 ≈ 9 ms send→receive (one machine, Docker Desktop) |
-| `e2e/` (Playwright) | Real browsers: sign-up, direct and group chat, typing, safety numbers, reload, new-device sign-in, wrong password, password reset with a recovery key, passkey sign-in (Chrome virtual authenticator with PRF), server-side key swap | 12 / 12 checks pass |
+| `e2e/` (Playwright) | Real browsers: sign-up, direct and group chat, typing, safety numbers, reload, new-device sign-in, wrong password, password reset with a recovery key, passkey sign-up and sign-in (Chrome virtual authenticator with PRF), server-side key swap | 12 / 12 checks pass |
 
 CI runs all four on every push ([workflow](.github/workflows/ci.yml)). The latency figure is from a single local run; it is not a load test.
 
@@ -112,13 +112,14 @@ Every option is free. The first four work out of the box; the last two are switc
 | Method | What it does | Unlocks your keys? | Setup |
 | --- | --- | --- | --- |
 | Password | Classic sign-in; a strength bar, show/hide and a **Generate** button help | Yes | None |
+| **Passkey sign-up** | Create an account with fingerprint, face or device PIN and never set a password | Yes | None |
 | Remember this device | Keeps keys unlocked in this browser for the 7-day session | Stays unlocked | None |
 | **Passkey** | Fingerprint, face or device PIN, no password at all | Yes, through the WebAuthn PRF extension | None (Security → Add a passkey) |
-| **Recovery key** | A 24-character key you save once; resets a forgotten password | Yes | None (Security → Create recovery key) |
-| Google / GitHub | One-click sign-in for an account you linked under Security | No, it only proves who you are | OAuth app: `GOOGLE_CLIENT_ID`/`_SECRET`, `GITHUB_CLIENT_ID`/`_SECRET` |
+| **Recovery key** | A 24-character key shown once at sign-up; resets a forgotten password | Yes | None (created with every account; replace it under Security) |
+| Google / GitHub | "Continue with Google" signs up (name and username prefilled, account linked) or signs in | No, it only proves who you are | OAuth app: `GOOGLE_CLIENT_ID`/`_SECRET`, `GITHUB_CLIENT_ID`/`_SECRET` |
 | Email code | A 6-digit code by email | No, it only proves who you are | Free [Brevo](https://www.brevo.com) key: `BREVO_API_KEY`, `MAIL_FROM` |
 
-**Why Google, GitHub and email cannot unlock keys:** if the server alone could sign you in *and* unlock your keys, it could read your messages. So those methods only create a session. On a device that has never been unlocked you then use your password, a passkey or the recovery key; on a remembered device you go straight in.
+**Why Google, GitHub and email cannot unlock keys:** if the server alone could sign you in *and* unlock your keys, it could read your messages. So those methods only create a session. Signing up with Google therefore still asks for one thing only you hold, a passkey (one tap) or a password. On a device that has never been unlocked you use it again; on a remembered device you go straight in.
 
 Provider setup, step by step: [docs/deploy-render.md](docs/deploy-render.md#5-optional-sign-in-with-google-github-or-email).
 

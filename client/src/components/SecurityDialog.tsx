@@ -219,7 +219,18 @@ function ConfirmIdentity({
   );
 }
 
-function RecoveryCode({ code, username, onDone }: { code: string; username: string; onDone: () => void }) {
+export function RecoveryCode({
+  code,
+  username,
+  onDone,
+  replacing = true,
+}: {
+  code: string;
+  username: string;
+  onDone: () => void;
+  /** False on sign-up, where there is no earlier key to invalidate. */
+  replacing?: boolean;
+}) {
   const download = () => {
     const text = `EchoCrypt recovery key\n\nUsername: ${username}\nRecovery key: ${code}\n\nUse it on the sign-in page under "Forgot password?".\nAnyone with this key and your username can reset your password. Keep it private.\n`;
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -230,7 +241,7 @@ function RecoveryCode({ code, username, onDone }: { code: string; username: stri
   return (
     <div className="space-y-3 rounded-xl border border-warn/40 bg-warn/5 p-4">
       <p className="text-sm font-medium">Save your recovery key now</p>
-      <p className="text-xs text-ink-400">It is shown only once. Any previous recovery key no longer works.</p>
+      <p className="text-xs text-ink-400">It is shown only once.{replacing && ' Any previous recovery key no longer works.'}</p>
       <p className="rounded-lg bg-ink-950 px-3 py-3 text-center font-mono text-sm tracking-wider break-all select-all" data-testid="recovery-code">
         {code}
       </p>

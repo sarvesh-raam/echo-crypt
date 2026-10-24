@@ -39,7 +39,9 @@ async function register(name, display) {
   await page.getByLabel('Username').fill(`${name}_${tag}`);
   await page.getByLabel('Display name').fill(display);
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await page.getByTestId('recovery-code').waitFor({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'I saved it' }).click();
   await page.getByText('Connected').waitFor({ timeout: 30_000 });
   return page;
 }
@@ -125,7 +127,7 @@ try {
   step('wrong password rejected');
 
   await carol.getByRole('button', { name: 'Security' }).click();
-  await carol.getByRole('button', { name: 'Create recovery key' }).click();
+  await carol.getByRole('button', { name: 'Replace recovery key' }).click();
   const code = (await carol.getByTestId('recovery-code').innerText()).trim();
   await carol.getByRole('button', { name: 'I saved it' }).click();
   await carol.getByText('Recovery key is set').waitFor();
@@ -141,7 +143,7 @@ try {
   await carolPhone.getByText('Group message for both of you').waitFor({ timeout: 10_000 });
   step('forgotten password reset with the recovery key; history still decrypts');
 
-  const dave = await register('dave', 'Dave Grohl');
+  const dave = await device('dave');
   const cdp = await dave.context().newCDPSession(dave);
   await cdp.send('WebAuthn.enable');
   await cdp.send('WebAuthn.addVirtualAuthenticator', {
@@ -156,14 +158,16 @@ try {
       automaticPresenceSimulation: true,
     },
   });
-  await dave.getByRole('button', { name: 'Security' }).click();
-  await dave.getByRole('button', { name: 'Add a passkey on this device' }).click();
-  await dave.getByText('Passkey added').waitFor({ timeout: 15_000 });
-  await dave.keyboard.press('Escape');
+  await dave.getByRole('tab', { name: 'Register' }).click();
+  await dave.getByLabel('Username').fill(`dave_${tag}`);
+  await dave.getByRole('button', { name: 'Create account with a passkey' }).click();
+  await dave.getByTestId('recovery-code').waitFor({ timeout: 30_000 });
+  await dave.getByRole('button', { name: 'I saved it' }).click();
+  await dave.getByText('Connected').waitFor({ timeout: 30_000 });
   await dave.getByRole('button', { name: 'Sign out' }).click();
   await dave.getByRole('button', { name: 'Sign in with a passkey' }).click();
   await dave.getByText('Connected').waitFor({ timeout: 30_000 });
-  step('passkey added, then used to sign in and unlock without a password');
+  step('signed up with a passkey (no password), then signed back in with it');
 
   // A malicious server swaps Bob's public keys for Carol's.
   execFileSync('docker', [

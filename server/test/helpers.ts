@@ -63,7 +63,7 @@ export async function api(
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
-  const setCookie = res.headers.get('set-cookie');
+  const setCookie = res.headers.getSetCookie().find((c) => c.startsWith('ec_session='));
   return {
     status: res.status,
     body: text ? JSON.parse(text) : null,
@@ -81,13 +81,20 @@ export interface TestUser {
 }
 
 /** Registers a user exactly like the browser does: all key material is made locally. */
-export async function register(base: string, username: string, password = `pw-${username}-secret`): Promise<TestUser> {
+export async function register(
+  base: string,
+  username: string,
+  password = `pw-${username}-secret`,
+  opts: { cookie?: string; extra?: Record<string, unknown> } = {},
+): Promise<TestUser> {
   const salt = generateSalt();
   const { authKey, wrapKey } = await deriveAccountKeys(password, salt, TEST_ITERATIONS);
   const accountKey = newAccountKey();
   const { identity, encrypted } = await createIdentity(await identityKey(accountKey));
   const res = await api(base, '/api/auth/register', {
+    cookie: opts.cookie,
     body: {
+      ...opts.extra,
       username,
       displayName: username.toUpperCase(),
       kdfSalt: salt,

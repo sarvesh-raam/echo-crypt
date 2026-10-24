@@ -6,7 +6,8 @@ import { config } from '../config.js';
 import type { AppContext } from '../context.js';
 import { currentUser, issueSession, publicOrigin, requireAuth, userIdFromCookie } from '../lib/auth.js';
 import { HttpError, handler, parse } from '../lib/http.js';
-import { PROVIDERS, authorizeUrl, fetchProviderUser, newFlowSecrets, type ProviderName } from '../lib/oauth.js';
+import { PROVIDERS, authorizeUrl, fetchProviderUser, newFlowSecrets, type ProviderName, type ProviderUser } from '../lib/oauth.js';
+import { setPendingSignup } from '../lib/signup.js';
 import { logger } from '../logger.js';
 import { User } from '../models/User.js';
 
@@ -82,7 +83,7 @@ export function oauthRoutes(ctx: AppContext): Router {
       }
       if (query.error || !query.code) return back({ auth_error: 'Sign-in was cancelled.' });
 
-      let account: { id: string; label: string };
+      let account: ProviderUser;
       try {
         account = await fetchProviderUser(name, provider, query.code, redirectUri(publicOrigin(req), name), flow.v);
       } catch (err) {
@@ -97,14 +98,14 @@ export function oauthRoutes(ctx: AppContext): Router {
         if (owner && String(owner._id) !== flow.u) {
           return back({ auth_error: `That ${label} account is already linked to another EchoCrypt user.` });
         }
-        await User.updateOne({ _id: flow.u }, { $set: { [`oauth.${name}`]: account } });
+        await User.updateOne({ _id: flow.u }, { $set: { [`oauth.${name}`]: { id: account.id, label: account.label } } });
         return back({ notice: `${label} account linked.` });
       }
 
       if (!owner) {
-        return back({
-          auth_error: `No EchoCrypt account is linked to this ${label} account yet. Sign in once, then link it under Security.`,
-        });
+        // New here: the browser finishes sign-up (it has to create the keys).
+        setPendingSignup(res, { provider: name, account });
+        return back({ signup: name });
       }
       issueSession(res, String(owner._id));
       return back({});

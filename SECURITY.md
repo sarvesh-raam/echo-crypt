@@ -23,7 +23,7 @@ All from the Web Crypto API; no custom cryptography.
 | Recovery key | 24 Crockford base32 characters (120 bits) → HKDF-SHA256 → auth key + wrap key |
 | Passkeys | WebAuthn (ES256/RS256, user verification required; origin and RP ID checked by `@simplewebauthn/server`); PRF extension output → HKDF-SHA256 → slot key |
 | Email codes | 6 random digits, kept as SHA-256 in Redis for 10 minutes, single use, burned after 5 wrong guesses |
-| Google / GitHub | OAuth 2.0 authorization code flow with PKCE (S256) and a signed, short-lived state cookie |
+| Google / GitHub | OAuth 2.0 authorization code flow with PKCE (S256) and a signed, short-lived state cookie; a new user's provider identity waits in a signed 15-minute cookie until the browser has created the account's keys |
 | Key agreement | ECDH P-256, with a fresh ephemeral key per message and recipient |
 | Message key wrapping | HKDF-SHA256 over the ECDH secret, bound to conversation, message id, recipient and ephemeral key; then AES-256-GCM |
 | Content encryption | AES-256-GCM with a one-time 256-bit key; AAD binds conversation, sender and message id |
