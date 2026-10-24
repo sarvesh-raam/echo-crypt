@@ -12,7 +12,12 @@ import { config } from './config.js';
 import type { AppContext } from './context.js';
 import { HttpError, errorHandler } from './lib/http.js';
 import { logger } from './logger.js';
+import { mailerFromConfig, type Mailer } from './lib/mailer.js';
+import { oauthFromConfig, type OAuthProviders } from './lib/oauth.js';
 import { authRoutes } from './routes/auth.js';
+import { emailRoutes } from './routes/email.js';
+import { oauthRoutes } from './routes/oauth.js';
+import { passkeyRoutes } from './routes/passkeys.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { userRoutes } from './routes/users.js';
 import { attachSocketHandlers } from './socket/index.js';
@@ -28,7 +33,9 @@ export interface App {
  * the Socket.io Redis adapter relays every emit through Redis Pub/Sub, so a message
  * sent to instance A reaches sockets connected to instance B.
  */
-export function createApp(opts: { redisUrl?: string; instanceId?: string } = {}): App {
+export function createApp(
+  opts: { redisUrl?: string; instanceId?: string; mailer?: Mailer | null; oauth?: OAuthProviders } = {},
+): App {
   const redisUrl = opts.redisUrl ?? config.REDIS_URL;
   const redis = new Redis(redisUrl, { maxRetriesPerRequest: 3 });
   const pub = new Redis(redisUrl);
@@ -42,7 +49,12 @@ export function createApp(opts: { redisUrl?: string; instanceId?: string } = {})
     maxHttpBufferSize: 64 * 1024,
     serveClient: false,
   });
-  const ctx: AppContext = { redis, io };
+  const ctx: AppContext = {
+    redis,
+    io,
+    mailer: opts.mailer === undefined ? mailerFromConfig() : opts.mailer,
+    oauth: opts.oauth ?? oauthFromConfig(),
+  };
 
   app.disable('x-powered-by');
   app.set('trust proxy', config.TRUST_PROXY);
@@ -85,7 +97,7 @@ export function createApp(opts: { redisUrl?: string; instanceId?: string } = {})
     });
   });
 
-  app.use('/api/auth', authRoutes(ctx));
+  app.use('/api/auth', authRoutes(ctx), passkeyRoutes(ctx), oauthRoutes(ctx), emailRoutes(ctx));
   app.use('/api/users', userRoutes());
   app.use('/api/conversations', conversationRoutes(ctx));
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));

@@ -11,6 +11,9 @@
 import { io, type Socket } from 'socket.io-client';
 import {
   createIdentity,
+  identityKey,
+  newAccountKey,
+  sealAccountKey,
   decryptMessage,
   deriveAccountKeys,
   encryptMessage,
@@ -41,13 +44,15 @@ async function post(base: string, path: string, body: unknown, cookie?: string) 
 async function register(base: string, username: string): Promise<User> {
   const salt = generateSalt();
   const { authKey, wrapKey } = await deriveAccountKeys('scale-check-password', salt, 100_000);
-  const { identity, encrypted } = await createIdentity(wrapKey);
+  const accountKey = newAccountKey();
+  const { identity, encrypted } = await createIdentity(await identityKey(accountKey));
   const res = await post(base, '/api/auth/register', {
     username,
     displayName: username,
     kdfSalt: salt,
     kdfIterations: 100_000,
     authKey,
+    passwordSlot: await sealAccountKey(accountKey, wrapKey, 'password'),
     publicKeys: encrypted.publicKeys,
     encryptedKeys: { dhPrivate: encrypted.dhPrivate, signPrivate: encrypted.signPrivate },
   });

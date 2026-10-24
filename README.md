@@ -15,6 +15,7 @@ Socket.io for real-time delivery, MongoDB for ciphertext-only storage, and Redis
 
 - **End-to-end encryption** for direct chats and groups (up to 32 members), using only the browser's Web Crypto API.
 - **Zero-knowledge accounts.** The password never leaves the browser. Private keys are stored on the server only in encrypted form, so you can sign in on another device and still read your history.
+- **Easy sign-in that keeps the guarantees:** passkeys (fingerprint, face or device PIN, with no password), a printable recovery key for a forgotten password, "remember this device", a password generator, and optional Google, GitHub and email-code sign-in. See [Sign-in options](#sign-in-options).
 - **Signed messages.** Every message is ECDSA-signed by its sender, so neither the server nor another member can forge or alter one.
 - **Safety numbers and key-change detection.** Compare a 60-digit number to rule out a man-in-the-middle. If the server ever presents a different key for a contact, the chat shows a warning and sending pauses until you check it.
 - **Real time:** live delivery, typing indicators, online presence, unread counts, and catch-up after reconnecting.
@@ -31,10 +32,16 @@ Account
   password ──PBKDF2-SHA256 (600k)──▶ master ──HKDF──▶ authKey   → sent to server, hashed again with scrypt
                                               └─HKDF──▶ wrapKey   → never leaves the browser
 
+Account key (random 256-bit, generated in the browser at sign-up)
+  sealed once per unlock method ("key slots"), each slot uploaded:
+    AES-256-GCM(wrapKey,                    accountKey)   password slot
+    AES-256-GCM(HKDF(recovery code),        accountKey)   recovery slot (optional)
+    AES-256-GCM(HKDF(passkey PRF output),   accountKey)   one slot per passkey (optional)
+
 Identity (generated in the browser at sign-up)
   ECDH P-256 key pair   (key agreement)
   ECDSA P-256 key pair  (signatures)
-  private halves ──AES-256-GCM(wrapKey)──▶ uploaded, so other devices can unlock them with the password
+  private halves ──AES-256-GCM(accountKey)──▶ uploaded, so other devices can unlock them
 
 Message
   K   = random 256-bit key, used once
@@ -55,7 +62,8 @@ On receipt, the client **verifies the signature before decrypting**. Any tamperi
 | --- | --- |
 | Usernames, display names, group names | Message contents |
 | Who is in which conversation, and when messages are sent | Your password |
-| Public keys; *encrypted* private keys | Your private keys, or the key that unlocks them |
+| Public keys; *encrypted* private keys and key slots | Your private keys, the account key, your recovery key or passkey secrets |
+| Linked Google/GitHub account ids and a verified email, if you add them | Anything that lets those sign-ins decrypt |
 | Ciphertext size (rounded to 128 bytes) | Exact message length |
 
 The full threat model, including what EchoCrypt does **not** protect against, is in [SECURITY.md](SECURITY.md).
@@ -88,12 +96,29 @@ flowchart LR
 
 | Check | What it covers | Result |
 | --- | --- | --- |
-| `npm run test:crypto` | Round trips, tamper detection on every signed field, forged senders, non-members, key separation, safety numbers | 17 / 17 pass |
-| `npm run test:server` | Two server instances sharing Mongo + Redis: auth, cross-instance delivery, ciphertext-only storage, idempotency, rejection of forged or incomplete envelopes, history and pagination, group membership, presence and typing across instances, rate limits | 15 / 15 pass |
+| `npm run test:crypto` | Round trips, tamper detection on every signed field, forged senders, non-members, key separation, key slots, recovery codes, safety numbers | 21 / 21 pass |
+| `npm run test:server` | Two server instances sharing Mongo + Redis: auth, cross-instance delivery, ciphertext-only storage, idempotency, rejection of forged or incomplete envelopes, history and pagination, group membership, presence and typing across instances, rate limits; passkeys checked with a software authenticator (replays, wrong origin), recovery-key reset, email codes (single use, brute-force cut-off), GitHub sign-in against a faked provider (forged state, unlinked accounts) | 26 / 26 pass |
 | `npm run scale-check` | Real Docker stack: load balancer reaches both instances; users on different instances exchange 50 messages | 50 / 50 delivered and decrypted; p50 ≈ 9 ms send→receive (one machine, Docker Desktop) |
-| `e2e/` (Playwright) | Real browsers: sign-up, direct and group chat, typing, safety numbers, reload, new-device sign-in, wrong password, server-side key swap | 10 / 10 checks pass |
+| `e2e/` (Playwright) | Real browsers: sign-up, direct and group chat, typing, safety numbers, reload, new-device sign-in, wrong password, password reset with a recovery key, passkey sign-in (Chrome virtual authenticator with PRF), server-side key swap | 12 / 12 checks pass |
 
 CI runs all four on every push ([workflow](.github/workflows/ci.yml)). The latency figure is from a single local run; it is not a load test.
+
+## Sign-in options
+
+Every option is free. The first four work out of the box; the last two are switched on by environment variables.
+
+| Method | What it does | Unlocks your keys? | Setup |
+| --- | --- | --- | --- |
+| Password | Classic sign-in; a strength bar, show/hide and a **Generate** button help | Yes | None |
+| Remember this device | Keeps keys unlocked in this browser for the 7-day session | Stays unlocked | None |
+| **Passkey** | Fingerprint, face or device PIN, no password at all | Yes, through the WebAuthn PRF extension | None (Security → Add a passkey) |
+| **Recovery key** | A 24-character key you save once; resets a forgotten password | Yes | None (Security → Create recovery key) |
+| Google / GitHub | One-click sign-in for an account you linked under Security | No, it only proves who you are | OAuth app: `GOOGLE_CLIENT_ID`/`_SECRET`, `GITHUB_CLIENT_ID`/`_SECRET` |
+| Email code | A 6-digit code by email | No, it only proves who you are | Free [Brevo](https://www.brevo.com) key: `BREVO_API_KEY`, `MAIL_FROM` |
+
+**Why Google, GitHub and email cannot unlock keys:** if the server alone could sign you in *and* unlock your keys, it could read your messages. So those methods only create a session. On a device that has never been unlocked you then use your password, a passkey or the recovery key; on a remembered device you go straight in.
+
+Provider setup, step by step: [docs/deploy-render.md](docs/deploy-render.md#5-optional-sign-in-with-google-github-or-email).
 
 ## Quick start
 
@@ -120,7 +145,7 @@ Set your own `JWT_SECRET` (32+ random characters, the same on every instance) an
 
 The repo includes a [Render Blueprint](render.yaml): one Docker web service plus a Key Value (Redis) instance, with MongoDB on Atlas. All three have free tiers. Step-by-step: [docs/deploy-render.md](docs/deploy-render.md).
 
-Any host works if it supports WebSockets and HTTPS. Set `NODE_ENV=production`, `MONGO_URL`, `REDIS_URL`, `JWT_SECRET`, `COOKIE_SECURE=true`, and `TRUST_PROXY` (the number of proxies in front of the app).
+Any host works if it supports WebSockets and HTTPS. Set `NODE_ENV=production`, `MONGO_URL`, `REDIS_URL`, `JWT_SECRET`, `COOKIE_SECURE=true`, `TRUST_PROXY` (the number of proxies in front of the app) and `PUBLIC_URL` (the exact `https://` address users open; passkeys and OAuth redirects depend on it).
 
 ## Local development
 
@@ -160,7 +185,8 @@ These are deliberate scope limits, stated plainly:
 - **Trust on first use.** Key-change detection protects you after the first contact. To rule out a man-in-the-middle at first contact, compare safety numbers.
 - **The server delivers the JavaScript.** As with any web-based E2EE app, a compromised server could serve modified client code. Native apps or reproducible builds address this.
 - **Metadata is visible** to the server (see the table above).
-- **No password recovery.** Losing the password means losing the keys, by design.
+- **Recovery needs something you kept.** A forgotten password can be reset with the recovery key, or skipped with a passkey. Lose the password, every passkey and the recovery key, and the keys are gone, by design.
+- **Passkeys need PRF support.** Current platforms mostly have it (Chrome and Edge with Google Password Manager, Safari 18+ with iCloud Keychain, Android, recent security keys). Where it is missing, the app says so and you keep using the password.
 - Sessions are 7-day JWTs in an `HttpOnly`, `SameSite=Strict` cookie. Signing out clears the cookie and local keys, but a stolen token stays valid until it expires.
 - Text messages only; no attachments yet.
 

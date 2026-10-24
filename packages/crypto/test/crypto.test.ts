@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   CryptoError,
+  deriveRecoveryKeys,
+  generateRecoveryCode,
+  identityKey,
+  newAccountKey,
+  normalizeRecoveryCode,
+  openAccountKey,
+  passkeyWrapKey,
+  sealAccountKey,
   createIdentity,
   decryptMessage,
   deriveAccountKeys,
@@ -191,5 +199,54 @@ describe('safety numbers', () => {
     const a = await makeUser('a');
     expect(await fingerprint(a.identity.publicKeys)).toBe(await fingerprint({ ...a.identity.publicKeys }));
     expect(await fingerprint(a.identity.publicKeys)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('key slots', () => {
+  it('opens the same account key from every slot, and the identity with it', async () => {
+    const accountKey = newAccountKey();
+    const { identity, encrypted } = await createIdentity(await identityKey(accountKey));
+
+    const { wrapKey: pwKey } = await deriveAccountKeys('hunter2', generateSalt(), ITER);
+    const code = generateRecoveryCode();
+    const { wrapKey: recKey } = await deriveRecoveryKeys(code);
+    const pkKey = await passkeyWrapKey(crypto.getRandomValues(new Uint8Array(32)));
+
+    const slots = {
+      password: await sealAccountKey(accountKey, pwKey, 'password'),
+      recovery: await sealAccountKey(accountKey, recKey, 'recovery'),
+      passkey: await sealAccountKey(accountKey, pkKey, 'passkey'),
+    };
+    for (const [kind, kek] of [['password', pwKey], ['recovery', recKey], ['passkey', pkKey]] as const) {
+      const opened = await openAccountKey(slots[kind], kek, kind);
+      expect(opened).toEqual(accountKey);
+      const id = await unlockIdentity(encrypted, await identityKey(opened));
+      expect(id.publicKeys).toEqual(identity.publicKeys);
+    }
+  });
+
+  it('binds each slot to its kind and rejects the wrong key', async () => {
+    const accountKey = newAccountKey();
+    const { wrapKey } = await deriveAccountKeys('pw', generateSalt(), ITER);
+    const slot = await sealAccountKey(accountKey, wrapKey, 'password');
+    await expect(openAccountKey(slot, wrapKey, 'recovery')).rejects.toMatchObject({ code: 'DECRYPT_FAILED' });
+    const { wrapKey: other } = await deriveAccountKeys('pw2', generateSalt(), ITER);
+    await expect(openAccountKey(slot, other, 'password')).rejects.toMatchObject({ code: 'DECRYPT_FAILED' });
+  });
+
+  it('accepts recovery codes however they are typed', async () => {
+    const code = generateRecoveryCode();
+    expect(code).toMatch(/^([0-9A-HJKMNP-TV-Z]{4}-){5}[0-9A-HJKMNP-TV-Z]{4}$/);
+    const a = await deriveRecoveryKeys(code);
+    const b = await deriveRecoveryKeys(` ${code.toLowerCase().replace(/-/g, ' ')} `);
+    expect(b.authKey).toBe(a.authKey);
+    expect(normalizeRecoveryCode('o0-il')).toBe('0011');
+    await expect(deriveRecoveryKeys('too-short')).rejects.toMatchObject({ code: 'BAD_INPUT' });
+  });
+
+  it('derives a different passkey key for a different PRF output', async () => {
+    const accountKey = newAccountKey();
+    const slot = await sealAccountKey(accountKey, await passkeyWrapKey(new Uint8Array(32).fill(1)), 'passkey');
+    await expect(openAccountKey(slot, await passkeyWrapKey(new Uint8Array(32).fill(2)), 'passkey')).rejects.toThrow();
   });
 });

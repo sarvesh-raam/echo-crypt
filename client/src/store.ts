@@ -2,20 +2,30 @@ import {
   createIdentity,
   decryptMessage,
   deriveAccountKeys,
+  deriveRecoveryKeys,
   encryptMessage,
+  generateRecoveryCode,
   generateSalt,
+  identityKey,
+  newAccountKey,
   newClientId,
+  openAccountKey,
+  passkeyWrapKey,
   PBKDF2_ITERATIONS,
+  sealAccountKey,
   unlockIdentity,
+  type Bytes,
   type Identity,
   type PublicKeys,
+  type SlotKind,
 } from '@echocrypt/crypto';
 import { io, type Socket } from 'socket.io-client';
 import { create } from 'zustand';
 import { api, ApiError } from './lib/api';
 import { clearIdentities, loadIdentity, saveIdentity } from './lib/keystore';
+import { createPasskey, signInWithPasskey } from './lib/passkey';
 import { acceptKeys, checkTrust, type TrustState } from './lib/trust';
-import type { ChatMessage, Conversation, PublicUser, WireMessage } from './lib/types';
+import type { ChatMessage, Conversation, KeyBundle, PublicUser, WireMessage } from './lib/types';
 
 interface Thread {
   messages: ChatMessage[];
@@ -40,9 +50,22 @@ interface State {
   typing: Record<string, Record<string, number>>;
 
   boot(): Promise<void>;
-  register(username: string, displayName: string, password: string, onStep?: (s: string) => void): Promise<void>;
-  login(username: string, password: string, onStep?: (s: string) => void): Promise<void>;
+  register(username: string, displayName: string, password: string, remember: boolean, onStep?: Step): Promise<void>;
+  login(username: string, password: string, remember: boolean, onStep?: Step): Promise<void>;
+  loginWithPasskey(remember: boolean, onStep?: Step): Promise<void>;
+  /** "Forgot password": unlocks with the recovery key, sets a new password and signs in. */
+  recover(username: string, code: string, newPassword: string, remember: boolean, onStep?: Step): Promise<void>;
+  /** Signs in (session only) with an emailed code; keys may still need unlocking. */
+  emailLogin(email: string, code: string): Promise<void>;
   logout(): Promise<void>;
+
+  /** True when this tab holds the account key, which adding a passkey or recovery key needs. */
+  canManageKeys(): boolean;
+  /** Re-opens the account key for the signed-in user (settings ask for this after a reload). */
+  confirmWithPassword(password: string): Promise<void>;
+  confirmWithPasskey(): Promise<void>;
+  createRecoveryKey(): Promise<string>;
+  addPasskey(name: string): Promise<void>;
   select(id: string | null): void;
   loadOlder(id: string): Promise<void>;
   send(conversationId: string, text: string): Promise<void>;
@@ -54,8 +77,12 @@ interface State {
   acceptKey(userId: string, verified: boolean): Promise<void>;
 }
 
+type Step = (s: string) => void;
+
 // Things that must not trigger re-renders live outside the store.
 let identity: Identity | null = null;
+/** Raw account key, kept in memory only (never stored) after an unlock in this tab. */
+let accountKey: Bytes | null = null;
 let socket: Socket | null = null;
 const keyCache = new Map<string, PublicKeys>();
 
@@ -77,6 +104,38 @@ function merge(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] 
 
 export const useStore = create<State>((set, get) => {
   const meId = () => get().me?.id ?? '';
+
+  /** Opens the slot this sign-in method can open, then the identity sealed under the account key. */
+  async function openBundle(user: PublicUser, bundle: KeyBundle, kek: CryptoKey, kind: SlotKind) {
+    const key = await openAccountKey(bundle.slot, kek, kind);
+    const id = await unlockIdentity({ publicKeys: user.publicKeys, ...bundle.encryptedKeys }, await identityKey(key));
+    return { key, id };
+  }
+
+  async function finishUnlock(user: PublicUser, key: Bytes, id: Identity, remember: boolean) {
+    accountKey = key;
+    // "Remember this device" keeps the (non-extractable) keys in IndexedDB across reloads.
+    await clearIdentities();
+    if (remember) await saveIdentity(user.id, id);
+    await startSession(user, id);
+  }
+
+  async function newPasswordFields(password: string, key: Bytes) {
+    const kdfSalt = generateSalt();
+    const { authKey, wrapKey } = await deriveAccountKeys(password, kdfSalt);
+    return {
+      kdfSalt,
+      kdfIterations: PBKDF2_ITERATIONS,
+      authKey,
+      passwordSlot: await sealAccountKey(key, wrapKey, 'password'),
+    };
+  }
+
+  async function passkeyUnlock() {
+    const { credential, prf } = await signInWithPasskey(await api.passkeyOptions());
+    const res = await api.passkeyLogin(credential);
+    return { user: res.user, ...(await openBundle(res.user, res, await passkeyWrapKey(prf), 'passkey')) };
+  }
 
   async function senderKeys(userId: string): Promise<PublicKeys | null> {
     if (userId === meId() && identity) return identity.publicKeys;
@@ -293,42 +352,96 @@ export const useStore = create<State>((set, get) => {
       }
     },
 
-    async register(username, displayName, password, onStep) {
+    async register(username, displayName, password, remember, onStep) {
       onStep?.('Deriving keys from your password…');
-      const salt = generateSalt();
-      const { authKey, wrapKey } = await deriveAccountKeys(password, salt);
+      const key = newAccountKey();
+      const passwordFields = await newPasswordFields(password, key);
       onStep?.('Generating your identity keys…');
-      const { identity: id, encrypted } = await createIdentity(wrapKey);
+      const { identity: id, encrypted } = await createIdentity(await identityKey(key));
       onStep?.('Creating account…');
       const { user } = await api.register({
         username,
         displayName,
-        kdfSalt: salt,
-        kdfIterations: PBKDF2_ITERATIONS,
-        authKey,
+        ...passwordFields,
         publicKeys: encrypted.publicKeys,
         encryptedKeys: { dhPrivate: encrypted.dhPrivate, signPrivate: encrypted.signPrivate },
       });
-      await saveIdentity(user.id, id);
-      await startSession(user, id);
+      await finishUnlock(user, key, id, remember);
     },
 
-    async login(username, password, onStep) {
+    async login(username, password, remember, onStep) {
       onStep?.('Deriving keys from your password…');
       const params = await api.params(username);
       const { authKey, wrapKey } = await deriveAccountKeys(password, params.salt, params.iterations);
       onStep?.('Signing in…');
-      const { user, encryptedKeys } = await api.login(username, authKey);
+      const res = await api.login(username, authKey);
       onStep?.('Unlocking your keys…');
-      const id = await unlockIdentity({ publicKeys: user.publicKeys, ...encryptedKeys }, wrapKey);
-      await saveIdentity(user.id, id);
-      await startSession(user, id);
+      const { key, id } = await openBundle(res.user, res, wrapKey, 'password');
+      await finishUnlock(res.user, key, id, remember);
+    },
+
+    async loginWithPasskey(remember, onStep) {
+      onStep?.('Waiting for your passkey…');
+      const { user, key, id } = await passkeyUnlock();
+      onStep?.('Unlocking your keys…');
+      await finishUnlock(user, key, id, remember);
+    },
+
+    async recover(username, code, newPassword, remember, onStep) {
+      onStep?.('Checking your recovery key…');
+      const recovery = await deriveRecoveryKeys(code);
+      const res = await api.recoveryStart(username, recovery.authKey);
+      const { key, id } = await openBundle(res.user, res, recovery.wrapKey, 'recovery');
+      onStep?.('Setting your new password…');
+      const { user } = await api.recoveryFinish({
+        username,
+        recoveryAuthKey: recovery.authKey,
+        ...(await newPasswordFields(newPassword, key)),
+      });
+      await finishUnlock(user, key, id, remember);
+    },
+
+    async emailLogin(email, code) {
+      await api.emailLogin(email, code);
+      await get().boot();
+    },
+
+    canManageKeys: () => accountKey !== null,
+
+    async confirmWithPassword(password) {
+      const me = get().me;
+      if (!me) throw new Error('Not signed in');
+      const params = await api.params(me.username);
+      const { authKey, wrapKey } = await deriveAccountKeys(password, params.salt, params.iterations);
+      const res = await api.login(me.username, authKey);
+      accountKey = (await openBundle(res.user, res, wrapKey, 'password')).key;
+    },
+
+    async confirmWithPasskey() {
+      const { user, key } = await passkeyUnlock();
+      if (user.id !== meId()) throw new Error('That passkey belongs to a different account.');
+      accountKey = key;
+    },
+
+    async createRecoveryKey() {
+      if (!accountKey) throw new Error('Confirm it is you first.');
+      const code = generateRecoveryCode();
+      const { authKey, wrapKey } = await deriveRecoveryKeys(code);
+      await api.setRecovery(authKey, await sealAccountKey(accountKey, wrapKey, 'recovery'));
+      return code;
+    },
+
+    async addPasskey(name) {
+      if (!accountKey) throw new Error('Confirm it is you first.');
+      const { credential, prf } = await createPasskey(await api.passkeyRegisterOptions());
+      await api.addPasskey(credential, name, await sealAccountKey(accountKey, await passkeyWrapKey(prf), 'passkey'));
     },
 
     async logout() {
       socket?.disconnect();
       socket = null;
       identity = null;
+      accountKey = null;
       keyCache.clear();
       await clearIdentities();
       await api.logout().catch(() => undefined);

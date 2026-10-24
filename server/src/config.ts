@@ -27,6 +27,20 @@ const schema = z.object({
     .transform((v) => (v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v)),
   /** Sign-ups allowed per IP per hour. */
   REGISTER_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(20),
+  /**
+   * Public origin of the app, e.g. https://chat.example.com. Passkeys and OAuth redirects
+   * use it. Falls back to Render's RENDER_EXTERNAL_URL, then to the request's own host.
+   */
+  PUBLIC_URL: z.string().url().optional(),
+  RENDER_EXTERNAL_URL: z.string().url().optional(),
+  /** Optional "Sign in with Google / GitHub". Each provider is enabled when both values are set. */
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  /** Optional email sign-in codes, sent through Brevo's HTTP API (free tier: 300 emails/day). */
+  BREVO_API_KEY: z.string().optional(),
+  MAIL_FROM: z.string().email().optional(),
 });
 
 const env = schema.parse(process.env);
@@ -39,6 +53,7 @@ export const config = {
   ...env,
   JWT_SECRET: env.JWT_SECRET ?? randomBytes(32).toString('hex'),
   COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
+  publicUrl: (env.PUBLIC_URL ?? env.RENDER_EXTERNAL_URL)?.replace(/\/+$/, ''),
 };
 
 export type Config = typeof config;

@@ -1,7 +1,9 @@
-import { LogOut, PenSquare, Search, Users } from 'lucide-react';
+import { LogOut, PenSquare, Search, Shield, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { conversationTitle, useStore } from '../store';
+import { takeSecurityFlash } from '../lib/flash';
 import { NewChatDialog } from './NewChatDialog';
+import { SecurityDialog } from './SecurityDialog';
 import { Avatar } from './ui';
 
 function shortTime(iso: string | null) {
@@ -26,6 +28,9 @@ export function Sidebar() {
 
   const [filter, setFilter] = useState('');
   const [dialog, setDialog] = useState(false);
+  // Opens by itself when returning from linking Google/GitHub.
+  const [linkResult] = useState(takeSecurityFlash);
+  const [security, setSecurity] = useState(linkResult !== null);
 
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -47,6 +52,9 @@ export function Sidebar() {
         </div>
         <button className="icon-btn" onClick={() => setDialog(true)} title="New chat" aria-label="New chat">
           <PenSquare className="h-[18px] w-[18px]" />
+        </button>
+        <button className="icon-btn" onClick={() => setSecurity(true)} title="Security" aria-label="Security">
+          <Shield className="h-[18px] w-[18px]" />
         </button>
         <button className="icon-btn" onClick={() => void logout()} title="Sign out" aria-label="Sign out">
           <LogOut className="h-[18px] w-[18px]" />
@@ -143,6 +151,12 @@ export function Sidebar() {
       </footer>
 
       {dialog && <NewChatDialog onClose={() => setDialog(false)} />}
+      {security && (
+        <SecurityDialog
+          onClose={() => setSecurity(false)}
+          initial={linkResult ?? undefined}
+        />
+      )}
     </aside>
   );
 }

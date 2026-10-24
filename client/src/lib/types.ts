@@ -32,6 +32,25 @@ export interface EncryptedKeys {
   signPrivate: WrappedSecret;
 }
 
+/** The sealed identity plus the one key slot the chosen sign-in method can open. */
+export interface KeyBundle {
+  encryptedKeys: EncryptedKeys;
+  slot: WrappedSecret;
+}
+
+export interface Providers {
+  google: boolean;
+  github: boolean;
+  email: boolean;
+}
+
+export interface SecurityInfo {
+  recovery: boolean;
+  passkeys: { id: string; name: string; createdAt: string; lastUsedAt: string | null }[];
+  email: string | null;
+  oauth: { google: string | null; github: string | null };
+}
+
 export type MessageStatus = 'sending' | 'sent' | 'failed' | 'undecryptable';
 
 export interface ChatMessage {

@@ -7,8 +7,10 @@
  *
  *  Account:  password --PBKDF2-SHA256--> master --HKDF--> authKey (sent to server, hashed again)
  *                                                  \--HKDF--> wrapKey (never leaves the client)
+ *            A random account key is sealed under wrapKey (the "password slot"); a recovery
+ *            code and each passkey (WebAuthn PRF) can hold slots of their own.
  *  Identity: ECDH P-256 key (key agreement) + ECDSA P-256 key (signatures),
- *            private halves AES-GCM-encrypted under wrapKey before upload.
+ *            private halves AES-GCM-encrypted under the account key before upload.
  *  Message:  random 256-bit message key encrypts the padded plaintext (AES-256-GCM).
  *            For every member, a fresh ephemeral ECDH key + HKDF derives a key that
  *            wraps the message key. The sender signs the whole envelope with ECDSA.
@@ -137,6 +139,97 @@ export async function deriveAccountKeys(
     ['encrypt', 'decrypt'],
   );
   return { authKey: toB64(authBits), wrapKey };
+}
+
+// ---------------------------------------------------------------------------
+// Account key and key slots
+//
+// The identity's private keys are sealed under one random account key. Each way of
+// unlocking (password, recovery key, every passkey) stores its own copy of the account
+// key, sealed under a key only that method can produce. Adding or removing a method
+// never re-encrypts the identity, and the server holds nothing that opens any slot.
+// ---------------------------------------------------------------------------
+
+export type SlotKind = 'password' | 'recovery' | 'passkey';
+
+export function newAccountKey(): Bytes {
+  return randomBytes(32);
+}
+
+/** The key that seals the identity (pass it to createIdentity / unlockIdentity). */
+export function identityKey(accountKey: Bytes): Promise<CryptoKey> {
+  return subtle().importKey('raw', accountKey, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+export async function sealAccountKey(accountKey: Bytes, kek: CryptoKey, kind: SlotKind): Promise<WrappedSecret> {
+  const iv = randomBytes(12);
+  const data = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: utf8(`echocrypt/v1/slot/${kind}`) }, kek, accountKey);
+  return { iv: toB64(iv), data: toB64(data) };
+}
+
+export async function openAccountKey(slot: WrappedSecret, kek: CryptoKey, kind: SlotKind): Promise<Bytes> {
+  try {
+    const raw = await subtle().decrypt(
+      { name: 'AES-GCM', iv: fromB64(slot.iv), additionalData: utf8(`echocrypt/v1/slot/${kind}`) },
+      kek,
+      fromB64(slot.data),
+    );
+    return new Uint8Array(raw);
+  } catch {
+    throw new CryptoError(`Could not unlock your keys with this ${kind === 'password' ? 'password' : `${kind} key`}`, 'DECRYPT_FAILED');
+  }
+}
+
+// Crockford base32: no I, L, O or U, so a written-down code is hard to misread.
+const RECOVERY_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/** 24 random characters (120 bits) in groups of four, e.g. "7KQ2-M9XD-…". Shown to the user once. */
+export function generateRecoveryCode(): string {
+  const chars = Array.from(randomBytes(24), (b) => RECOVERY_ALPHABET[b & 31]!).join('');
+  return chars.match(/.{4}/g)!.join('-');
+}
+
+export function normalizeRecoveryCode(code: string): string {
+  return code
+    .toUpperCase()
+    .replace(/[\s-]/g, '')
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1');
+}
+
+async function hkdfPair(secret: Bytes, label: string): Promise<{ authKey: string; wrapKey: CryptoKey }> {
+  const s = subtle();
+  const hk = await s.importKey('raw', secret, 'HKDF', false, ['deriveBits', 'deriveKey']);
+  const salt = utf8(label);
+  const authBits = await s.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info: utf8('auth') }, hk, 256);
+  const wrapKey = await s.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: utf8('wrap') },
+    hk,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+  return { authKey: toB64(authBits), wrapKey };
+}
+
+/**
+ * The recovery code already has 120 bits of entropy, so no slow KDF is needed. Like the
+ * password, it yields an authKey for the server and a wrapKey that never leaves the client.
+ */
+export async function deriveRecoveryKeys(code: string): Promise<{ authKey: string; wrapKey: CryptoKey }> {
+  const normalized = normalizeRecoveryCode(code);
+  if (!/^[0-9A-HJKMNP-TV-Z]{24}$/.test(normalized)) throw new CryptoError('That is not a valid recovery key', 'BAD_INPUT');
+  return hkdfPair(utf8(normalized), 'echocrypt/v1/recovery');
+}
+
+/** Fixed input for the WebAuthn PRF extension; each passkey turns it into its own secret. */
+export const PASSKEY_PRF_SALT = utf8('echocrypt/v1/passkey-prf');
+
+/** Turns a passkey's PRF output into the key that seals that passkey's slot. */
+export async function passkeyWrapKey(prfOutput: ArrayBuffer | Uint8Array): Promise<CryptoKey> {
+  const bytes = new Uint8Array(prfOutput.byteLength);
+  bytes.set(prfOutput instanceof Uint8Array ? prfOutput : new Uint8Array(prfOutput));
+  return (await hkdfPair(bytes, 'echocrypt/v1/passkey')).wrapKey;
 }
 
 // ---------------------------------------------------------------------------

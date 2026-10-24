@@ -1,6 +1,11 @@
-import { KeyRound, Loader2, Lock, ServerOff, ShieldCheck } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { ArrowLeft, Fingerprint, KeyRound, LifeBuoy, Loader2, Lock, Mail, ServerOff, ShieldCheck } from 'lucide-react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { Divider, Field, PasswordInput, ProviderIcon, RememberDevice } from '../components/forms';
 import { ErrorText } from '../components/ui';
+import { api, oauthStartUrl, type OAuthProvider } from '../lib/api';
+import { takeAuthError } from '../lib/flash';
+import { passkeysSupported } from '../lib/passkey';
+import type { Providers } from '../lib/types';
 import { useStore } from '../store';
 
 const FEATURES = [
@@ -9,43 +14,96 @@ const FEATURES = [
   { icon: ShieldCheck, title: 'Signed and verifiable', text: 'Every message is ECDSA-signed. Compare safety numbers to rule out a man in the middle.' },
 ];
 
+type View = 'login' | 'register' | 'recover' | 'email';
+
+const PROVIDER_LABEL: Record<OAuthProvider, string> = { google: 'Google', github: 'GitHub' };
+
 export function AuthPage() {
   const locked = useStore((s) => s.phase === 'locked');
   const lockedUser = useStore((s) => s.me);
-  const { login, register, logout } = useStore.getState();
+  const { login, register, loginWithPasskey, recover, emailLogin, logout } = useStore.getState();
 
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [view, setView] = useState<View>('login');
+  const [providers, setProviders] = useState<Providers>({ google: false, github: false, email: false });
   const [username, setUsername] = useState(lockedUser?.username ?? '');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [email, setEmail] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [step, setStep] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(takeAuthError);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const isRegister = mode === 'register' && !locked;
+  useEffect(() => {
+    api.providers().then(setProviders, () => undefined);
+  }, []);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  const go = (v: View) => {
+    setView(v);
     setError(null);
-    if (isRegister) {
-      if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) return setError('Username: 3–24 letters, digits or underscores.');
-      if (password.length < 10) return setError('Use at least 10 characters. Your password protects your private keys.');
-      if (password !== confirm) return setError('Passwords do not match.');
-    }
+    setNotice(null);
+    setPassword('');
+  };
+
+  /** Runs an action with the busy state and error display every form shares. */
+  async function run(action: () => Promise<void>, busy = 'Working…') {
+    setError(null);
+    setStep(busy);
     try {
-      if (isRegister) await register(username.toLowerCase(), displayName.trim() || username, password, setStep);
-      else await login(username.toLowerCase(), password, setStep);
+      await action();
     } catch (err) {
-      setError(
-        err instanceof Error && /unlock/i.test(err.message)
-          ? 'Signed in, but your keys could not be unlocked with this password.'
-          : err instanceof Error
-            ? err.message
-            : 'Something went wrong',
-      );
-      setStep(null);
+      setError(err instanceof Error ? err.message : 'Something went wrong');
     }
+    setStep(null);
   }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const name = username.trim().toLowerCase();
+    if (view === 'register' && !locked) {
+      if (!/^[a-z0-9_]{3,24}$/.test(name)) return setError('Username: 3–24 letters, digits or underscores.');
+      if (password.length < 10) return setError('Use at least 10 characters. Your password protects your private keys.');
+      return void run(() => register(name, displayName.trim() || username.trim(), password, remember, setStep));
+    }
+    if (view === 'recover') {
+      if (password.length < 10) return setError('Use at least 10 characters for the new password.');
+      return void run(() => recover(name, recoveryCode, password, remember, setStep));
+    }
+    if (view === 'email') {
+      if (!codeSent) {
+        return void run(async () => {
+          await api.emailLoginStart(email.trim());
+          setCodeSent(true);
+          setNotice(`If ${email.trim()} belongs to an account, a 6-digit code is on its way.`);
+        }, 'Sending code…');
+      }
+      return void run(() => emailLogin(email.trim(), emailCode), 'Signing in…');
+    }
+    void run(() => login(name, password, remember, setStep));
+  }
+
+  const busy = !!step;
+  const passkeyButton = passkeysSupported() && (
+    <button type="button" className="btn-ghost w-full border border-ink-700" disabled={busy} onClick={() => void run(() => loginWithPasskey(remember, setStep))}>
+      <Fingerprint className="h-4 w-4" /> {locked ? 'Unlock with a passkey' : 'Sign in with a passkey'}
+    </button>
+  );
+
+  const unlocking = locked && view === 'login';
+  const heading = unlocking
+    ? 'Unlock your keys'
+    : { login: 'Welcome back', register: 'Create your account', recover: 'Reset your password', email: 'Sign in with email' }[view];
+  const intro = unlocking
+    ? 'You are signed in, but this browser does not hold your private keys. Unlock them with your password, a passkey or your recovery key.'
+    : {
+        login: 'Your password unlocks your keys locally. It is never sent to the server.',
+        register: 'Your keys are generated in this browser. Afterwards, add a passkey and a recovery key under Security so you can never be locked out.',
+        recover: 'Your recovery key unlocks your keys and lets you choose a new password. Your messages stay intact.',
+        email: 'We email you a 6-digit code. On a new device you will then unlock your keys with your password or a passkey.',
+      }[view];
 
   return (
     <div className="flex min-h-full flex-col lg:flex-row">
@@ -79,29 +137,21 @@ export function AuthPage() {
           <div className="mb-8 lg:hidden">
             <Brand />
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight">
-            {locked ? 'Unlock your keys' : isRegister ? 'Create your account' : 'Welcome back'}
-          </h2>
-          <p className="mt-2 text-sm text-ink-400">
-            {locked
-              ? 'Your session is active, but this browser no longer holds your private keys. Enter your password to unlock them.'
-              : isRegister
-                ? 'Your keys are generated in this browser. If you forget your password, nobody can recover your messages.'
-                : 'Your password unlocks your keys locally. It is never sent to the server.'}
-          </p>
+          {(view === 'recover' || view === 'email') && (
+            <BackLink onClick={() => go('login')}>{locked ? 'Back to unlock' : 'Back to sign in'}</BackLink>
+          )}
+          <h2 className="text-2xl font-semibold tracking-tight">{heading}</h2>
+          <p className="mt-2 text-sm text-ink-400">{intro}</p>
 
-          {!locked && (
+          {!locked && (view === 'login' || view === 'register') && (
             <div className="mt-6 grid grid-cols-2 rounded-lg bg-ink-850 p-1 text-sm" role="tablist">
               {(['login', 'register'] as const).map((m) => (
                 <button
                   key={m}
                   role="tab"
-                  aria-selected={mode === m}
-                  onClick={() => {
-                    setMode(m);
-                    setError(null);
-                  }}
-                  className={`rounded-md py-2 font-medium transition ${mode === m ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-100'}`}
+                  aria-selected={view === m}
+                  onClick={() => go(m)}
+                  className={`rounded-md py-2 font-medium transition ${view === m ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-100'}`}
                 >
                   {m === 'login' ? 'Sign in' : 'Register'}
                 </button>
@@ -110,67 +160,163 @@ export function AuthPage() {
           )}
 
           <form onSubmit={submit} className="mt-6 space-y-4">
-            <Field label="Username">
-              <input
-                className="input"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
-                autoCapitalize="none"
-                spellCheck={false}
-                disabled={locked}
-                required
-              />
-            </Field>
-            {isRegister && (
-              <Field label="Display name" hint="optional">
-                <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={48} />
-              </Field>
-            )}
-            <Field label="Password">
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete={isRegister ? 'new-password' : 'current-password'}
-                required
-                autoFocus={locked}
-              />
-            </Field>
-            {isRegister && (
-              <Field label="Confirm password">
-                <input
-                  className="input"
-                  type="password"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  autoComplete="new-password"
-                  required
+            {view === 'email' ? (
+              <>
+                <Field label="Email">
+                  <input
+                    className="input"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                    disabled={codeSent}
+                    required
+                    autoFocus
+                  />
+                </Field>
+                {codeSent && (
+                  <Field label="6-digit code">
+                    <input
+                      className="input font-mono tracking-[0.4em]"
+                      value={emailCode}
+                      onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      required
+                      autoFocus
+                    />
+                  </Field>
+                )}
+              </>
+            ) : (
+              <>
+                <Field label="Username">
+                  <input
+                    className="input"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username webauthn"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    disabled={locked}
+                    required
+                  />
+                </Field>
+                {view === 'register' && !locked && (
+                  <Field label="Display name" hint="optional">
+                    <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={48} />
+                  </Field>
+                )}
+                {view === 'recover' && (
+                  <Field label="Recovery key">
+                    <input
+                      className="input font-mono uppercase"
+                      value={recoveryCode}
+                      onChange={(e) => setRecoveryCode(e.target.value)}
+                      placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+                      autoCapitalize="characters"
+                      spellCheck={false}
+                      required
+                    />
+                  </Field>
+                )}
+                <PasswordInput
+                  label={view === 'recover' ? 'New password' : 'Password'}
+                  value={password}
+                  onChange={setPassword}
+                  isNew={view === 'register' || view === 'recover'}
+                  autoFocus={locked && view === 'login'}
                 />
-              </Field>
+                {view === 'login' && (
+                  <div className="-mt-2 text-right">
+                    <button type="button" className="text-xs text-ink-400 hover:text-accent" onClick={() => go('recover')}>
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
+                <RememberDevice checked={remember} onChange={setRemember} />
+              </>
             )}
+
+            {notice && <p className="text-sm text-accent">{notice}</p>}
             <ErrorText>{error}</ErrorText>
-            <button className="btn-primary w-full" disabled={!!step}>
-              {step ? (
+
+            <button className="btn-primary w-full" disabled={busy}>
+              {busy ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" /> {step}
                 </>
               ) : (
                 <>
-                  <KeyRound className="h-4 w-4" /> {locked ? 'Unlock' : isRegister ? 'Create account' : 'Sign in'}
+                  <KeyRound className="h-4 w-4" />
+                  {view === 'email'
+                    ? codeSent
+                      ? 'Sign in'
+                      : 'Email me a code'
+                    : view === 'recover'
+                      ? 'Reset password'
+                      : locked
+                        ? 'Unlock'
+                        : view === 'register'
+                          ? 'Create account'
+                          : 'Sign in'}
                 </>
               )}
             </button>
-            {locked && (
-              <button type="button" className="btn-ghost w-full" onClick={() => void logout()}>
-                Use a different account
-              </button>
-            )}
           </form>
+
+          {view === 'login' && (
+            <div className="mt-6 space-y-3">
+              <Divider>{locked ? 'or unlock with' : 'or continue with'}</Divider>
+              {passkeyButton}
+              {!locked && (providers.google || providers.github) && (
+                <div className="grid grid-cols-2 gap-3">
+                  {(['google', 'github'] as const)
+                    .filter((p) => providers[p])
+                    .map((p) => (
+                      <a
+                        key={p}
+                        href={oauthStartUrl(p, 'login')}
+                        className={`btn-ghost border border-ink-700 ${providers.google && providers.github ? '' : 'col-span-2'}`}
+                      >
+                        <ProviderIcon provider={p} /> {PROVIDER_LABEL[p]}
+                      </a>
+                    ))}
+                </div>
+              )}
+              {!locked && providers.email && (
+                <button type="button" className="btn-ghost w-full border border-ink-700" onClick={() => go('email')}>
+                  <Mail className="h-4 w-4" /> Email me a code
+                </button>
+              )}
+              {locked && (
+                <>
+                  <button type="button" className="btn-ghost w-full border border-ink-700" onClick={() => go('recover')}>
+                    <LifeBuoy className="h-4 w-4" /> Use my recovery key
+                  </button>
+                  <button type="button" className="btn-ghost w-full" onClick={() => void logout()}>
+                    Use a different account
+                  </button>
+                </>
+              )}
+              {!locked && (providers.google || providers.github || providers.email) && (
+                <p className="text-center text-xs text-ink-400">
+                  Google, GitHub and email sign you in. On a new device you still unlock your keys with your password or a passkey.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </main>
     </div>
+  );
+}
+
+function BackLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="mb-4 inline-flex items-center gap-1.5 text-sm text-ink-400 hover:text-ink-100">
+      <ArrowLeft className="h-4 w-4" /> {children}
+    </button>
   );
 }
 
@@ -180,16 +326,5 @@ function Brand() {
       <img src="/favicon.svg" alt="" className="h-8 w-8" />
       <span className="text-lg font-semibold tracking-tight">EchoCrypt</span>
     </div>
-  );
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium text-ink-300">
-        {label} {hint && <span className="font-normal text-ink-400">({hint})</span>}
-      </span>
-      {children}
-    </label>
   );
 }

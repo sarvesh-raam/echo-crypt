@@ -1,6 +1,14 @@
 import type { AddressInfo } from 'node:net';
 import {
   createIdentity,
+  identityKey,
+  newAccountKey,
+  openAccountKey,
+  sealAccountKey,
+  unlockIdentity,
+  type Bytes,
+  type SlotKind,
+  type WrappedSecret,
   decryptMessage,
   deriveAccountKeys,
   encryptMessage,
@@ -12,6 +20,8 @@ import { Redis } from 'ioredis';
 import mongoose from 'mongoose';
 import { io as ioClient, type Socket } from 'socket.io-client';
 import { connectMongo, createApp, type App } from '../src/app.js';
+import type { Mailer } from '../src/lib/mailer.js';
+import type { OAuthProviders } from '../src/lib/oauth.js';
 
 export const MONGO_URL = process.env.TEST_MONGO_URL ?? 'mongodb://localhost:27018/echocrypt_test';
 export const REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://localhost:6380';
@@ -23,8 +33,8 @@ export interface Instance {
   url: string;
 }
 
-export async function startInstance(): Promise<Instance> {
-  const app = createApp({ redisUrl: REDIS_URL });
+export async function startInstance(opts: { mailer?: Mailer | null; oauth?: OAuthProviders } = {}): Promise<Instance> {
+  const app = createApp({ redisUrl: REDIS_URL, mailer: opts.mailer ?? null, oauth: opts.oauth ?? {} });
   await new Promise<void>((r) => app.httpServer.listen(0, '127.0.0.1', r));
   const { port } = app.httpServer.address() as AddressInfo;
   return { app, url: `http://127.0.0.1:${port}` };
@@ -67,13 +77,15 @@ export interface TestUser {
   password: string;
   cookie: string;
   identity: Identity;
+  accountKey: Bytes;
 }
 
 /** Registers a user exactly like the browser does: all key material is made locally. */
 export async function register(base: string, username: string, password = `pw-${username}-secret`): Promise<TestUser> {
   const salt = generateSalt();
   const { authKey, wrapKey } = await deriveAccountKeys(password, salt, TEST_ITERATIONS);
-  const { identity, encrypted } = await createIdentity(wrapKey);
+  const accountKey = newAccountKey();
+  const { identity, encrypted } = await createIdentity(await identityKey(accountKey));
   const res = await api(base, '/api/auth/register', {
     body: {
       username,
@@ -81,12 +93,23 @@ export async function register(base: string, username: string, password = `pw-${
       kdfSalt: salt,
       kdfIterations: TEST_ITERATIONS,
       authKey,
+      passwordSlot: await sealAccountKey(accountKey, wrapKey, 'password'),
       publicKeys: encrypted.publicKeys,
       encryptedKeys: { dhPrivate: encrypted.dhPrivate, signPrivate: encrypted.signPrivate },
     },
   });
   if (res.status !== 201) throw new Error(`register failed: ${res.status} ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, username, password, cookie: res.cookie!, identity };
+  return { id: res.body.user.id, username, password, cookie: res.cookie!, identity, accountKey };
+}
+
+/** Opens a { user, encryptedKeys, slot } response the way the client does. */
+export async function openBundle(
+  body: { user: { publicKeys: { dh: string; sign: string } }; encryptedKeys: { dhPrivate: WrappedSecret; signPrivate: WrappedSecret }; slot: WrappedSecret },
+  kek: CryptoKey,
+  kind: SlotKind,
+): Promise<Identity> {
+  const accountKey = await openAccountKey(body.slot, kek, kind);
+  return unlockIdentity({ publicKeys: body.user.publicKeys, ...body.encryptedKeys }, await identityKey(accountKey));
 }
 
 export function connect(base: string, cookie?: string): Promise<Socket> {

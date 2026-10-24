@@ -3,7 +3,9 @@ import { parse as parseCookie, serialize } from 'cookie';
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
+import type { Redis } from 'ioredis';
 import { HttpError } from './http.js';
+import { rateLimit } from './rateLimit.js';
 
 export const SESSION_COOKIE = 'ec_session';
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -37,7 +39,7 @@ export function decoySalt(username: string): string {
 
 export function issueSession(res: Response, userId: string): void {
   const token = jwt.sign({}, config.JWT_SECRET, { subject: userId, expiresIn: SESSION_TTL_SECONDS, algorithm: 'HS256' });
-  res.setHeader(
+  res.append(
     'Set-Cookie',
     serialize(SESSION_COOKIE, token, {
       httpOnly: true,
@@ -50,7 +52,7 @@ export function issueSession(res: Response, userId: string): void {
 }
 
 export function clearSession(res: Response): void {
-  res.setHeader(
+  res.append(
     'Set-Cookie',
     serialize(SESSION_COOKIE, '', { httpOnly: true, secure: config.COOKIE_SECURE, sameSite: 'strict', path: '/', maxAge: 0 }),
   );
@@ -86,3 +88,27 @@ export const currentUser = (req: Request): string => {
   if (!req.userId) throw new HttpError(401, 'Not signed in');
   return req.userId;
 };
+
+/**
+ * The origin the browser is on (scheme://host[:port]). Passkeys are bound to it and
+ * OAuth providers redirect back to it, so it must match exactly.
+ */
+export function publicOrigin(req: Request): string {
+  return config.publicUrl ?? `${req.protocol}://${req.get('host')}`;
+}
+
+/** Throws a 429 with Retry-After when the Redis counter for `key` is over `limit`. */
+export async function limitOrThrow(
+  redis: Redis,
+  res: Response,
+  key: string,
+  limit: number,
+  windowMs: number,
+  message = 'Too many attempts, try again later',
+): Promise<void> {
+  const retry = await rateLimit(redis, key, limit, windowMs);
+  if (retry) {
+    res.setHeader('Retry-After', Math.ceil(retry / 1000));
+    throw new HttpError(429, message);
+  }
+}

@@ -1,4 +1,4 @@
-import { deriveAccountKeys, unlockIdentity } from '@echocrypt/crypto';
+import { deriveAccountKeys } from '@echocrypt/crypto';
 import mongoose from 'mongoose';
 import type { Socket } from 'socket.io-client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import {
   createConversation,
   nextEvent,
   open,
+  openBundle,
   register,
   resetData,
   seal,
@@ -57,10 +58,7 @@ describe('accounts', () => {
     expect(login.cookie).toMatch(/^ec_session=/);
 
     // The keys the server returns are encrypted; the password-derived key opens them.
-    const identity = await unlockIdentity(
-      { publicKeys: login.body.user.publicKeys, ...login.body.encryptedKeys },
-      wrapKey,
-    );
+    const identity = await openBundle(login.body, wrapKey, 'password');
     expect(identity.publicKeys).toEqual(alice.identity.publicKeys);
 
     const me = await api(B.url, '/api/auth/me', { cookie: login.cookie });

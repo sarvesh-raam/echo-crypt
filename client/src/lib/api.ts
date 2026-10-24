@@ -1,4 +1,5 @@
-import type { Conversation, EncryptedKeys, PublicUser, WireMessage } from './types';
+import type { WrappedSecret } from '@echocrypt/crypto';
+import type { Conversation, KeyBundle, Providers, PublicUser, SecurityInfo, WireMessage } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -22,12 +23,42 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
   return data as T;
 }
 
+export type OAuthProvider = 'google' | 'github';
+
+/** Full-page navigation: the provider redirects back to the server, which redirects to the app. */
+export const oauthStartUrl = (provider: OAuthProvider, mode: 'login' | 'link') =>
+  `/api/auth/oauth/${provider}/start?mode=${mode}`;
+
 export const api = {
   params: (username: string) =>
     request<{ salt: string; iterations: number }>(`/api/auth/params?username=${encodeURIComponent(username)}`),
   register: (body: unknown) => request<{ user: PublicUser }>('/api/auth/register', { body }),
   login: (username: string, authKey: string) =>
-    request<{ user: PublicUser; encryptedKeys: EncryptedKeys }>('/api/auth/login', { body: { username, authKey } }),
+    request<{ user: PublicUser } & KeyBundle>('/api/auth/login', { body: { username, authKey } }),
+  providers: () => request<Providers>('/api/auth/providers'),
+  security: () => request<SecurityInfo>('/api/auth/security'),
+
+  passkeyOptions: () => request<Record<string, unknown>>('/api/auth/passkey/options', { method: 'POST' }),
+  passkeyLogin: (credential: unknown) =>
+    request<{ user: PublicUser } & KeyBundle>('/api/auth/passkey/login', { body: { credential } }),
+  passkeyRegisterOptions: () => request<Record<string, unknown>>('/api/auth/passkeys/options', { method: 'POST' }),
+  addPasskey: (credential: unknown, name: string, slot: WrappedSecret) =>
+    request<{ id: string }>('/api/auth/passkeys', { body: { credential, name, slot } }),
+  removePasskey: (id: string) => request<void>(`/api/auth/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  setRecovery: (authKey: string, slot: WrappedSecret) =>
+    request<void>('/api/auth/recovery', { method: 'PUT', body: { authKey, slot } }),
+  removeRecovery: () => request<void>('/api/auth/recovery', { method: 'DELETE' }),
+  recoveryStart: (username: string, authKey: string) =>
+    request<{ user: PublicUser } & KeyBundle>('/api/auth/recovery/start', { body: { username, authKey } }),
+  recoveryFinish: (body: unknown) => request<{ user: PublicUser }>('/api/auth/recovery/finish', { body }),
+
+  addEmail: (email: string) => request<void>('/api/auth/email', { body: { email } }),
+  verifyEmail: (code: string) => request<{ email: string }>('/api/auth/email/verify', { body: { code } }),
+  removeEmail: () => request<void>('/api/auth/email', { method: 'DELETE' }),
+  emailLoginStart: (email: string) => request<void>('/api/auth/email/login/start', { body: { email } }),
+  emailLogin: (email: string, code: string) => request<{ user: PublicUser }>('/api/auth/email/login', { body: { email, code } }),
+  unlinkOAuth: (provider: OAuthProvider) => request<void>(`/api/auth/oauth/${provider}`, { method: 'DELETE' }),
   me: () => request<{ user: PublicUser }>('/api/auth/me'),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 

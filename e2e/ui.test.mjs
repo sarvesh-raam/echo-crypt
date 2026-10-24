@@ -6,7 +6,8 @@
  *
  * Drives several real browsers (separate contexts = separate devices) through
  * registration, direct and group chat, typing, safety numbers, reloads, signing
- * in on a new device, and a simulated server-side key swap.
+ * in on a new device, recovery keys, passkeys (Chrome's virtual authenticator with
+ * PRF) and a simulated server-side key swap.
  */
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
@@ -38,7 +39,6 @@ async function register(name, display) {
   await page.getByLabel('Username').fill(`${name}_${tag}`);
   await page.getByLabel('Display name').fill(display);
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
-  await page.getByLabel('Confirm password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create account' }).click();
   await page.getByText('Connected').waitFor({ timeout: 30_000 });
   return page;
@@ -111,7 +111,7 @@ try {
   const laptop = await device('bob-laptop');
   await laptop.getByLabel('Username').fill(`bob_${tag}`);
   await laptop.getByLabel('Password', { exact: true }).fill(PASSWORD);
-  await laptop.getByRole('button', { name: 'Sign in' }).click();
+  await laptop.getByRole('button', { name: 'Sign in', exact: true }).click();
   await laptop.getByText('Connected').waitFor({ timeout: 30_000 });
   await laptop.getByRole('button', { name: /Alice Liddell/ }).click();
   await laptop.getByText('Hi Alice! Works on my side too.').waitFor({ timeout: 10_000 });
@@ -120,9 +120,50 @@ try {
   const eve = await device('eve');
   await eve.getByLabel('Username').fill(`bob_${tag}`);
   await eve.getByLabel('Password', { exact: true }).fill('not the password');
-  await eve.getByRole('button', { name: 'Sign in' }).click();
+  await eve.getByRole('button', { name: 'Sign in', exact: true }).click();
   await eve.getByText('Wrong username or password').waitFor({ timeout: 30_000 });
   step('wrong password rejected');
+
+  await carol.getByRole('button', { name: 'Security' }).click();
+  await carol.getByRole('button', { name: 'Create recovery key' }).click();
+  const code = (await carol.getByTestId('recovery-code').innerText()).trim();
+  await carol.getByRole('button', { name: 'I saved it' }).click();
+  await carol.getByText('Recovery key is set').waitFor();
+  await carol.keyboard.press('Escape');
+  const carolPhone = await device('carol-phone');
+  await carolPhone.getByRole('button', { name: 'Forgot password?' }).click();
+  await carolPhone.getByLabel('Username').fill(`carol_${tag}`);
+  await carolPhone.getByLabel('Recovery key').fill(code.toLowerCase());
+  await carolPhone.getByLabel('New password').fill('a whole new password');
+  await carolPhone.getByRole('button', { name: 'Reset password' }).click();
+  await carolPhone.getByText('Connected').waitFor({ timeout: 30_000 });
+  await carolPhone.getByRole('button', { name: /Launch crew/ }).click();
+  await carolPhone.getByText('Group message for both of you').waitFor({ timeout: 10_000 });
+  step('forgotten password reset with the recovery key; history still decrypts');
+
+  const dave = await register('dave', 'Dave Grohl');
+  const cdp = await dave.context().newCDPSession(dave);
+  await cdp.send('WebAuthn.enable');
+  await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      ctap2Version: 'ctap2_1',
+      transport: 'internal',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      hasPrf: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+  await dave.getByRole('button', { name: 'Security' }).click();
+  await dave.getByRole('button', { name: 'Add a passkey on this device' }).click();
+  await dave.getByText('Passkey added').waitFor({ timeout: 15_000 });
+  await dave.keyboard.press('Escape');
+  await dave.getByRole('button', { name: 'Sign out' }).click();
+  await dave.getByRole('button', { name: 'Sign in with a passkey' }).click();
+  await dave.getByText('Connected').waitFor({ timeout: 30_000 });
+  step('passkey added, then used to sign in and unlock without a password');
 
   // A malicious server swaps Bob's public keys for Carol's.
   execFileSync('docker', [
