@@ -1,0 +1,35 @@
+# Render Blueprint: one web service (API + built client) and a Key Value (Redis) instance.
+# Deploy: Render dashboard -> New -> Blueprint -> select this repo. Render asks for MONGO_URL.
+# Full steps: docs/deploy-render.md
+services:
+  - type: web
+    name: echocrypt
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: MONGO_URL
+        sync: false # MongoDB Atlas connection string, entered on first deploy
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: echocrypt-kv
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true # generated once; keep it stable or every session is signed out
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: TRUST_PROXY
+        value: '1' # proxy hops in front of the app; see docs/deploy-render.md
+      - key: INSTANCE_ID
+        value: render
+
+  - type: keyvalue
+    name: echocrypt-kv
+    plan: free
+    region: oregon
+    maxmemoryPolicy: noeviction # Socket.io adapter and presence keys must not be evicted
+    ipAllowList: [] # reachable only from services in this Render account

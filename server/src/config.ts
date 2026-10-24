@@ -17,6 +17,14 @@ const schema = z.object({
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
   LOG_LEVEL: z.string().default('info'),
+  /**
+   * Express "trust proxy": how many proxy hops sit in front of the server (or true/false,
+   * or a list of addresses). Decides which IP the per-IP rate limits see.
+   */
+  TRUST_PROXY: z
+    .string()
+    .default('1')
+    .transform((v) => (v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v)),
   /** Sign-ups allowed per IP per hour. */
   REGISTER_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(20),
 });

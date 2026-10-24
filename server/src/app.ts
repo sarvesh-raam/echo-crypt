@@ -45,7 +45,7 @@ export function createApp(opts: { redisUrl?: string; instanceId?: string } = {})
   const ctx: AppContext = { redis, io };
 
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  app.set('trust proxy', config.TRUST_PROXY);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -61,7 +61,14 @@ export function createApp(opts: { redisUrl?: string; instanceId?: string } = {})
       },
     }),
   );
-  app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/health' } }));
+  app.use(
+    pinoHttp({
+      logger,
+      autoLogging: { ignore: (req) => req.url === '/health' },
+      // The IP the rate limits use; check it in the logs when setting TRUST_PROXY.
+      customProps: (req) => ({ clientIp: (req as express.Request).ip }),
+    }),
+  );
   app.use(express.json({ limit: '32kb' }));
 
   app.get('/health', async (_req, res) => {

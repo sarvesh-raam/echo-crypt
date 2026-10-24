@@ -28,5 +28,5 @@ COPY --from=build /app/client/dist public
 ENV STATIC_DIR=/app/public PORT=4000
 USER node
 EXPOSE 4000
-HEALTHCHECK --interval=15s --timeout=3s --start-period=20s CMD wget -qO- http://127.0.0.1:4000/health >/dev/null || exit 1
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s CMD wget -qO- "http://127.0.0.1:${PORT}/health" >/dev/null || exit 1
 CMD ["node", "server/dist/index.js"]

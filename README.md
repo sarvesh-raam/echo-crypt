@@ -116,6 +116,12 @@ cd e2e && npm install && npx playwright install chromium && npm test
 
 Set your own `JWT_SECRET` (32+ random characters, the same on every instance) and `COOKIE_SECURE=true` for anything beyond local use. Web Crypto requires a secure context: `https://` or `localhost`.
 
+## Deploy
+
+The repo includes a [Render Blueprint](render.yaml): one Docker web service plus a Key Value (Redis) instance, with MongoDB on Atlas. All three have free tiers. Step-by-step: [docs/deploy-render.md](docs/deploy-render.md).
+
+Any host works if it supports WebSockets and HTTPS. Set `NODE_ENV=production`, `MONGO_URL`, `REDIS_URL`, `JWT_SECRET`, `COOKIE_SECURE=true`, and `TRUST_PROXY` (the number of proxies in front of the app).
+
 ## Local development
 
 ```bash
