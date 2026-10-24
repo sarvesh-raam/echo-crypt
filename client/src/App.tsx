@@ -1,10 +1,18 @@
 import { Loader2 } from 'lucide-react';
 import { useEffect } from 'react';
 import { AuthPage } from './pages/AuthPage';
+import { LegalPage } from './pages/LegalPage';
 import { ChatPage } from './pages/ChatPage';
 import { useStore } from './store';
 
+const LEGAL = { '/privacy': 'privacy', '/terms': 'terms' } as const;
+
 export function App() {
+  const legal = LEGAL[window.location.pathname as keyof typeof LEGAL];
+  return legal ? <LegalPage page={legal} /> : <Chat />;
+}
+
+function Chat() {
   const phase = useStore((s) => s.phase);
   const boot = useStore((s) => s.boot);
   const unread = useStore((s) => Object.values(s.unread).reduce((a, b) => a + b, 0));

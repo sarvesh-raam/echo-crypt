@@ -56,7 +56,8 @@ These methods sign users in, but cannot unlock encryption keys (see the README).
 3. **Clients → Create client → Web application**. Under **Authorized redirect URIs** add:
    `https://echocrypt-xxxx.onrender.com/api/auth/oauth/google/callback`
 4. Copy the client ID and secret into Render as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-5. **Audience → Publish app**, so accounts other than test users can sign in. The app only asks for `openid email`, which needs no Google review.
+5. **Branding**: application home page `https://echocrypt-xxxx.onrender.com`, privacy policy `https://echocrypt-xxxx.onrender.com/privacy`, terms of service `https://echocrypt-xxxx.onrender.com/terms`. Set `CONTACT_EMAIL` in Render so those pages show where to send data requests.
+6. **Audience → Publish app**, so accounts other than test users can sign in. The app only asks for `openid email`, which needs no Google review.
 
 ### GitHub (free)
 

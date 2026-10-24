@@ -129,7 +129,10 @@ export function AuthPage() {
             ))}
           </ul>
         </div>
-        <p className="text-xs text-ink-400">Open source · MIT licensed</p>
+        <p className="text-xs text-ink-400">
+          Open source · MIT licensed · <a href="/privacy" className="hover:text-ink-100">Privacy</a> ·{' '}
+          <a href="/terms" className="hover:text-ink-100">Terms</a>
+        </p>
       </section>
 
       <main className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
@@ -264,6 +267,14 @@ export function AuthPage() {
               )}
             </button>
           </form>
+
+          {view === 'register' && !locked && (
+            <p className="mt-4 text-center text-xs text-ink-400">
+              By creating an account you agree to the{' '}
+              <a href="/terms" className="text-accent hover:underline">Terms</a> and{' '}
+              <a href="/privacy" className="text-accent hover:underline">Privacy Policy</a>.
+            </p>
+          )}
 
           {view === 'login' && (
             <div className="mt-6 space-y-3">

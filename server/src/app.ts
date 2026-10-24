@@ -97,7 +97,11 @@ export function createApp(
     });
   });
 
-  app.use('/api/auth', authRoutes(ctx), passkeyRoutes(ctx), oauthRoutes(ctx), emailRoutes(ctx));
+  app.get('/api/info', (_req, res) => {
+    res.json({ contactEmail: config.CONTACT_EMAIL ?? null });
+  });
+
+  app.use('/api/auth',authRoutes(ctx), passkeyRoutes(ctx), oauthRoutes(ctx), emailRoutes(ctx));
   app.use('/api/users', userRoutes());
   app.use('/api/conversations', conversationRoutes(ctx));
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));

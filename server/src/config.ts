@@ -40,6 +40,8 @@ const schema = z.object({
   GITHUB_CLIENT_SECRET: z.string().optional(),
   /** Optional email sign-in codes, sent through Brevo's HTTP API (free tier: 300 emails/day). */
   BREVO_API_KEY: z.string().optional(),
+  /** Shown on the privacy policy and terms pages for data requests and support. */
+  CONTACT_EMAIL: z.string().email().optional(),
   MAIL_FROM: z.string().email().optional(),
 });
 

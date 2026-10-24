@@ -72,3 +72,23 @@ body {
 .typing-dot {
   animation: blink 1.4s infinite both;
 }
+
+.legal h1 {
+  @apply mb-4 text-3xl font-semibold tracking-tight;
+}
+.legal h2 {
+  @apply mt-8 mb-2 text-lg font-semibold;
+}
+.legal p,
+.legal li {
+  @apply text-sm leading-relaxed text-ink-300;
+}
+.legal p + p {
+  @apply mt-3;
+}
+.legal ul {
+  @apply list-disc space-y-1.5 pl-5;
+}
+.legal a {
+  @apply text-accent underline-offset-2 hover:underline;
+}
